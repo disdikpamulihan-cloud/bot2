@@ -55,7 +55,7 @@ class HybridEnsembleSignalBot:
                     "ticks_history": deriv_symbol,
                     "count": count,
                     "end": "latest",
-                    "granularity": 900, # 15 Menit (TF 15M)
+                    "granularity": 60, # Dirobah ka 60 detik (TF 1M) supados hargana akurat & sinkron jeung MT5
                     "style": "candles"
                 }
                 ws.send(json.dumps(req))
@@ -83,7 +83,7 @@ class HybridEnsembleSignalBot:
 
     def extract_features_and_indicators(self, df: pd.DataFrame, symbol: str):
         if df.empty or len(df) < 30:
-            default_price = 4437.25 if symbol == 'XAUUSD' else 249185.0
+            default_price = 4374.25 if symbol == 'XAUUSD' else 249185.0
             return None, default_price, 5.0, 50.0
 
         close = np.array(df['Close'].values, dtype=float).ravel()
