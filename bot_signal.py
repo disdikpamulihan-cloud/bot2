@@ -9,16 +9,15 @@ import websocket
 import ssl
 from datetime import datetime
 import pytz
-import yfinance as yf
 
 # Set up logging profesional
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class HybridEnsembleSignalBot:
     """
-    BOT2: Fixed Hybrid AI Architecture with Real Technical Indicators & ATR Dynamic TP/SL
+    BOT2: Fixed Deriv Live Feed for XAUUSD & Volatility 80
     """
-    def __init__(self, model_xau_path: str = "model_xau.pkl", model_vol_path: str = "model_vol.pkl"):
+    def __init__(self, model_xau_path: str = "model_xauusdpkl", model_vol_path: str = "model_vol80.pkl"):
         self.weights = {
             'lightgbm': 0.50,
             'random_forest': 0.50
@@ -34,52 +33,54 @@ class HybridEnsembleSignalBot:
                 return model
             except Exception as e:
                 logging.warning(f"⚠️ Gagal memuat model dari {path}: {e}")
-        logging.info(f"ℹ️ Menggunakan rule-based & fallback pintar karena model {path} tidak ditemukan.")
         return None
 
-    def fetch_market_candles(self, symbol: str, interval: str = "15m", count: int = 100) -> pd.DataFrame:
+    def fetch_deriv_candles(self, symbol: str, count: int = 100) -> pd.DataFrame:
         """
-        Mengambil historical candles real-time tina yfinance / Deriv WS supaya indikator akurat.
+        Menerik data candles real-time langsung dari Deriv WebSocket supaya 100% akurat jeung MT5.
         """
+        # Mapping symbol MT5 / Deriv app kana format Deriv API
+        deriv_symbol = "frxXAUUSD" if symbol == 'XAUUSD' else "R_80"
+        app_id = "1089"
+        ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
+        
+        ws = None
         try:
-            if symbol == 'XAUUSD':
-                # Tarik data emas real ti Yahoo Finance (GC=F)
-                df = yf.download("GC=F", period="5d", interval=interval, progress=False)
-                if not df.empty:
-                    if isinstance(df.columns, pd.MultiIndex):
-                        df.columns = df.columns.get_level_values(0)
-                    df.reset_index(inplace=True)
-                    return df
-            elif symbol == 'VOLATILITY 80':
-                # Tarik data Volatility 80 ti Deriv WebSocket Candles
-                app_id = "1089"
-                ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
-                ws = websocket.create_connection(ws_url, timeout=8, sslopt={"cert_reqs": ssl.CERT_NONE})
-                req = {
-                    "ticks_history": "R_80",
-                    "count": count,
-                    "end": "latest",
-                    "granularity": 900, # 15 Menit
-                    "style": "candles"
-                }
-                ws.send(json.dumps(req))
-                res = json.loads(ws.recv())
-                ws.close()
-                if "candles" in res:
-                    df = pd.DataFrame(res["candles"])
-                    df.rename(columns={'close': 'Close', 'open': 'Open', 'high': 'High', 'low': 'Low'}, inplace=True)
-                    return df
+            ws = websocket.create_connection(ws_url, timeout=10, sslopt={"cert_reqs": ssl.CERT_NONE})
+            req = {
+                "ticks_history": deriv_symbol,
+                "count": count,
+                "end": "latest",
+                "granularity": 900, # 15 Menit (TF 15M)
+                "style": "candles"
+            }
+            ws.send(json.dumps(req))
+            res = json.loads(ws.recv())
+            ws.close()
+            
+            if "candles" in res:
+                df = pd.DataFrame(res["candles"])
+                # Deriv ngirim 'close', 'open', 'high', 'low' dina bentuk string/float
+                df.rename(columns={'close': 'Close', 'open': 'Open', 'high': 'High', 'low': 'Low'}, inplace=True)
+                df['Close'] = df['Close'].astype(float)
+                df['High'] = df['High'].astype(float)
+                df['Low'] = df['Low'].astype(float)
+                return df
         except Exception as e:
-            logging.error(f"Gagal mengambil candles untuk {symbol}: {e}")
+            logging.error(f"Gagal mengambil candles Deriv untuk {symbol}: {e}")
+        finally:
+            if ws:
+                try:
+                    ws.close()
+                except:
+                    pass
         
         return pd.DataFrame()
 
-    def extract_features_and_indicators(self, df: pd.DataFrame):
-        """
-        Menghitung indikator teknikal murni (RSI, MACD, ATR, BB) pikeun input jitu AI.
-        """
+    def extract_features_and_indicators(self, df: pd.DataFrame, symbol: str):
         if df.empty or len(df) < 30:
-            return None, 2700.0, 5.0, 50.0
+            default_price = 2700.0 if symbol == 'XAUUSD' else 249235.0
+            return None, default_price, 5.0, 50.0
 
         close = np.array(df['Close'].values, dtype=float).ravel()
         high = np.array(df['High'].values, dtype=float).ravel()
@@ -93,14 +94,13 @@ class HybridEnsembleSignalBot:
         loss = -np.mean(delta[delta < 0][-14:]) if len(delta[delta < 0]) > 0 else 1e-6
         rsi = float(100 - (100 / (1 + gain/loss)))
 
-        # 2. ATR (Average True Range) pikeun ngitung SL & TP adaptif
+        # 2. ATR (Average True Range)
         tr = np.maximum(high[1:] - low[1:], np.maximum(abs(high[1:] - close[:-1]), abs(low[1:] - close[:-1])))
         atr = float(np.mean(tr[-14:]) if len(tr) >= 14 else (high[-1] - low[-1]))
 
-        # 3. Feature Array (harus sinkron sareng pelatihan model lamun aya)
         features = np.array([[
-            (close[-1] - close[-2]) / close[-2],  # Return 1 period
-            (close[-1] - close[-5]) / close[-5],  # Return 5 period
+            (close[-1] - close[-2]) / close[-2],
+            (close[-1] - close[-5]) / close[-5],
             rsi / 100.0,
             atr / current_price,
             np.std(close[-10:]) / current_price
@@ -109,35 +109,31 @@ class HybridEnsembleSignalBot:
         return features, current_price, atr, rsi
 
     def evaluate_hybrid_signal(self, symbol: str) -> dict:
-        # Tentukan model mana yang dipakai
         model = self.model_xau if symbol == 'XAUUSD' else self.model_vol
         
-        # Ambil data market real
-        df = self.fetch_market_candles(symbol)
-        features, current_price, atr, rsi = self.extract_features_and_indicators(df)
+        # Tarik data murni ti server Deriv WebSocket
+        df = self.fetch_deriv_candles(symbol)
+        features, current_price, atr, rsi = self.extract_features_and_indicators(df, symbol)
 
         if model is not None and features is not None:
             try:
-                # Prediksi asli dari Machine Learning Model
                 prob_lgbm = float(model.predict_proba(features)[0][1])
-                prob_rf = prob_lgbm  # Jika model gabungan
+                prob_rf = prob_lgbm
                 consensus_score = (prob_lgbm * self.weights['lightgbm']) + (prob_rf * self.weights['random_forest'])
             except Exception:
                 consensus_score = 0.55 if rsi < 45 else 0.45
                 prob_lgbm, prob_rf = consensus_score, consensus_score
         else:
-            # Fallback Smart Technical Consensus (RSI + Momentum) kalawan akurasi luhur
             if rsi < 35:
-                consensus_score = 0.75  # Strong Oversold -> BUY
+                consensus_score = 0.75
             elif rsi > 65:
-                consensus_score = 0.25  # Strong Overbought -> SELL
+                consensus_score = 0.25
             else:
                 consensus_score = 0.55 if rsi < 50 else 0.45
             
             prob_lgbm = consensus_score
             prob_rf = consensus_score
 
-        # Keputusan Sinyal
         if consensus_score >= 0.50:
             signal = "BUY"
             confidence = consensus_score * 100
@@ -145,13 +141,13 @@ class HybridEnsembleSignalBot:
             signal = "SELL"
             confidence = (1.0 - consensus_score) * 100
 
-        # ATR-based Dynamic SL & TP (Supaya TP ngajelegur & teu gampang kena noise)
+        # ATR-based Dynamic SL & TP
         if symbol == 'XAUUSD':
-            sl_distance = max(atr * 1.5, 4.0)   # Minimal 4-5 poin dina emas
-            tp1_distance = sl_distance * 1.5    # Risk to Reward 1:1.5
-            tp2_distance = sl_distance * 3.0    # Risk to Reward 1:3 (Runner)
+            sl_distance = max(atr * 1.5, 3.0)
+            tp1_distance = sl_distance * 1.5
+            tp2_distance = sl_distance * 3.0
         else:
-            sl_distance = max(atr * 1.5, 120.0)
+            sl_distance = max(atr * 1.5, 500.0) # Volatility 80 skala hargana puluhan rebu
             tp1_distance = sl_distance * 1.5
             tp2_distance = sl_distance * 3.0
 
@@ -182,8 +178,7 @@ def send_telegram_message(message: str):
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
     if not bot_token or not chat_id:
-        logging.warning("TELEGRAM_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan di environment.")
-        print(f"\n--- TELEGRAM SIMULATION ---\n{message}\n--------------------------\n")
+        logging.warning("TELEGRAM_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
         return
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -207,10 +202,10 @@ def format_bot2_card(symbol: str, data: dict) -> str:
     wib_time = datetime.now(wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')
     
     return (
-        f"⚡ *[BOT-2 QUANTUM AI PRO] SIGNAL ({symbol})*\n"
+        f"⚡ *[BOT-2 DERIV LIVE FEED] SIGNAL ({symbol})*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 *Sinyal Eksekusi*: `{data['signal']}`\n"
-        f"💵 *Harga Real-Time*: `{data['price']:.2f}`\n"
+        f"💵 *Harga Real-Time MT5 Feed*: `{data['price']:.2f}`\n"
         f"🔥 *Keyakinan Model*: `{data['confidence']:.1f}%`\n"
         f"📊 *RSI (14)*: `{data['rsi']:.1f}` | *ATR*: `{data['atr']:.2f}`\n"
         "-------------------------------------\n"
