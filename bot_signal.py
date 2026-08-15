@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class HybridEnsembleSignalBot:
     """
-    BOT2: Fixed Deriv Live Feed for XAUUSD & Volatility 80
+    BOT2: Fixed Deriv Live Feed for XAUUSD & Volatility 80 with Multi-Symbol Fallback
     """
     def __init__(self, model_xau_path: str = "model_xauusdpkl", model_vol_path: str = "model_vol80.pkl"):
         self.weights = {
@@ -37,49 +37,53 @@ class HybridEnsembleSignalBot:
 
     def fetch_deriv_candles(self, symbol: str, count: int = 100) -> pd.DataFrame:
         """
-        Menerik data candles real-time langsung dari Deriv WebSocket supaya 100% akurat jeung MT5.
+        Menerik data candles real-time langsung dari Deriv WebSocket dengan multi-symbol fallback.
         """
-        # Mapping symbol MT5 / Deriv app kana format Deriv API
-        deriv_symbol = "frxXAUUSD" if symbol == 'XAUUSD' else "R_80"
+        if symbol == 'XAUUSD':
+            symbols_to_try = ["frxXAUUSD", "XAUUSD", "gold"]
+        else:
+            symbols_to_try = ["R_80"]
+
         app_id = "1089"
         ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
         
-        ws = None
-        try:
-            ws = websocket.create_connection(ws_url, timeout=10, sslopt={"cert_reqs": ssl.CERT_NONE})
-            req = {
-                "ticks_history": deriv_symbol,
-                "count": count,
-                "end": "latest",
-                "granularity": 900, # 15 Menit (TF 15M)
-                "style": "candles"
-            }
-            ws.send(json.dumps(req))
-            res = json.loads(ws.recv())
-            ws.close()
-            
-            if "candles" in res:
-                df = pd.DataFrame(res["candles"])
-                # Deriv ngirim 'close', 'open', 'high', 'low' dina bentuk string/float
-                df.rename(columns={'close': 'Close', 'open': 'Open', 'high': 'High', 'low': 'Low'}, inplace=True)
-                df['Close'] = df['Close'].astype(float)
-                df['High'] = df['High'].astype(float)
-                df['Low'] = df['Low'].astype(float)
-                return df
-        except Exception as e:
-            logging.error(f"Gagal mengambil candles Deriv untuk {symbol}: {e}")
-        finally:
-            if ws:
-                try:
-                    ws.close()
-                except:
-                    pass
-        
+        for deriv_symbol in symbols_to_try:
+            ws = None
+            try:
+                ws = websocket.create_connection(ws_url, timeout=8, sslopt={"cert_reqs": ssl.CERT_NONE})
+                req = {
+                    "ticks_history": deriv_symbol,
+                    "count": count,
+                    "end": "latest",
+                    "granularity": 900, # 15 Menit (TF 15M)
+                    "style": "candles"
+                }
+                ws.send(json.dumps(req))
+                res = json.loads(ws.recv())
+                ws.close()
+                
+                if "candles" in res and len(res["candles"]) > 0:
+                    df = pd.DataFrame(res["candles"])
+                    df.rename(columns={'close': 'Close', 'open': 'Open', 'high': 'High', 'low': 'Low'}, inplace=True)
+                    df['Close'] = df['Close'].astype(float)
+                    df['High'] = df['High'].astype(float)
+                    df['Low'] = df['Low'].astype(float)
+                    logging.info(f"✅ Sukses tarik data {symbol} via simbol: {deriv_symbol}")
+                    return df
+            except Exception as e:
+                logging.warning(f"⚠️ Gagal dengan simbol {deriv_symbol}: {e}")
+            finally:
+                if ws:
+                    try:
+                        ws.close()
+                    except:
+                        pass
+                        
         return pd.DataFrame()
 
     def extract_features_and_indicators(self, df: pd.DataFrame, symbol: str):
         if df.empty or len(df) < 30:
-            default_price = 2700.0 if symbol == 'XAUUSD' else 249235.0
+            default_price = 4437.25 if symbol == 'XAUUSD' else 249185.0
             return None, default_price, 5.0, 50.0
 
         close = np.array(df['Close'].values, dtype=float).ravel()
@@ -111,7 +115,6 @@ class HybridEnsembleSignalBot:
     def evaluate_hybrid_signal(self, symbol: str) -> dict:
         model = self.model_xau if symbol == 'XAUUSD' else self.model_vol
         
-        # Tarik data murni ti server Deriv WebSocket
         df = self.fetch_deriv_candles(symbol)
         features, current_price, atr, rsi = self.extract_features_and_indicators(df, symbol)
 
@@ -143,11 +146,11 @@ class HybridEnsembleSignalBot:
 
         # ATR-based Dynamic SL & TP
         if symbol == 'XAUUSD':
-            sl_distance = max(atr * 1.5, 3.0)
+            sl_distance = max(atr * 1.5, 5.0)
             tp1_distance = sl_distance * 1.5
             tp2_distance = sl_distance * 3.0
         else:
-            sl_distance = max(atr * 1.5, 500.0) # Volatility 80 skala hargana puluhan rebu
+            sl_distance = max(atr * 1.5, 500.0)
             tp1_distance = sl_distance * 1.5
             tp2_distance = sl_distance * 3.0
 
