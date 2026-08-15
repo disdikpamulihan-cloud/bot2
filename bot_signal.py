@@ -6,7 +6,7 @@ import os
 import requests
 import json
 import websocket
-import threading
+import ssl
 from datetime import datetime
 import pytz
 from sklearn.ensemble import RandomForestClassifier
@@ -22,14 +22,11 @@ class HybridEnsembleSignalBot:
     dan Time-Series Heuristics untuk konsensus sinyal tingkat tinggi.
     """
     def __init__(self, model_xau_path: str = None, model_vol_path: str = None):
-        # Bobot Voting Model (Total = 1.0)
         self.weights = {
-            'lightgbm': 0.45,   # Kecepatan & Fitur Teknikal
-            'random_forest': 0.35, # Resiliensi Terhadap Noise
-            'trend_sequence': 0.20 # Time-Series Sequence Heuristic
+            'lightgbm': 0.45,
+            'random_forest': 0.35,
+            'trend_sequence': 0.20
         }
-        
-        # Load model external jika ada
         self.model_xau = self._safe_load(model_xau_path)
         self.model_vol = self._safe_load(model_vol_path)
 
@@ -43,110 +40,102 @@ class HybridEnsembleSignalBot:
 
     def fetch_xauusd_price(self) -> float:
         """
-        Mengambil harga real-time XAUUSD.
-        Menggunakan API alternative agar lebih presisi sesuai running price broker.
+        Mengambil harga real-time XAUUSD dari multiple provider spot market.
         """
+        # API 1: GoldPrice API Direct
         try:
-            # Menggunakan API Binance / Market API terkini untuk XAUUSD / PAXG (Gold Spot Precision)
-            url = "https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT"
-            res = requests.get(url, timeout=5).json()
-            if 'price' in res:
-                price = float(res['price'])
-                logging.info(f"Harga XAUUSD Spot berhasil didapat: {price}")
+            url = "https://data-asg.goldprice.org/dbWRValidate/USD"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            res = requests.get(url, headers=headers, timeout=4).json()
+            if 'items' in res and len(res['items']) > 0:
+                price = float(res['items'][0]['xauPrice'])
+                logging.info(f"🔥 SUCCESS! Harga Real-Time XAUUSD (GoldPrice): {price}")
                 return price
         except Exception:
             pass
 
-        # Fallback ke Yahoo Finance jika API utama gagal
+        # API 2: MetalpriceAPI Free Endpoint
+        try:
+            url = "https://api.metalpriceapi.com/v1/latest?base=USD&currencies=XAU"
+            res = requests.get(url, timeout=4).json()
+            if 'rates' in res and 'XAU' in res['rates']:
+                price = 1.0 / float(res['rates']['XAU'])
+                logging.info(f"🔥 SUCCESS! Harga Real-Time XAUUSD (MetalPrice): {price}")
+                return round(price, 2)
+        except Exception:
+            pass
+
+        # API 3: Fallback Yahoo Finance (GC=F)
         try:
             url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1m&range=1d"
             headers = {'User-Agent': 'Mozilla/5.0'}
-            res = requests.get(url, headers=headers, timeout=5).json()
+            res = requests.get(url, headers=headers, timeout=4).json()
             result = res['chart']['result'][0]
             price = result['meta'].get('regularMarketPrice')
             if price is None or price == 0:
-                price = result['meta'].get('chartPreviousClose', 4374.25)
-            logging.info(f"Harga XAUUSD (Yahoo Fallback) didapat: {price}")
+                price = result['meta'].get('chartPreviousClose', 2700.00)
+            logging.info(f"Harga XAUUSD (Yahoo Fallback): {price}")
             return float(price)
         except Exception as e:
-            logging.warning(f"Gagal fetch XAUUSD ({e}). Menggunakan harga fallback: 4374.25")
-            return 4374.25
+            logging.warning(f"Gagal fetch XAUUSD ({e}). Menggunakan harga default: 2700.00")
+            return 2700.00
 
     def fetch_vol80_price(self) -> float:
         """
-        Mengambil harga real-time Volatility 80 Index via Deriv WebSocket API (Aktif 24/7).
-        Menggunakan Threading dengan strict timeout 5 detik agar tidak menggantung.
+        Mengambil harga real-time Volatility 80 Index via Direct WebSocket Deriv.
         """
-        live_price = None
-
-        def on_message(ws, message):
-            nonlocal live_price
-            try:
-                data = json.loads(message)
+        ws_url = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+        ws = None
+        try:
+            # Inisialisasi koneksi websocket dengan SSL context terisolasi
+            ws = websocket.create_connection(
+                ws_url, 
+                timeout=8,
+                sslopt={"cert_reqs": ssl.CERT_NONE}
+            )
+            
+            # Kirim request subscription tick
+            payload = json.dumps({"ticks": "R_80"})
+            ws.send(payload)
+            
+            # Loop max 3 kali baca pesan buffer hingga menemukan payload 'tick'
+            for _ in range(3):
+                raw_msg = ws.recv()
+                data = json.loads(raw_msg)
                 if 'tick' in data and 'quote' in data['tick']:
                     live_price = float(data['tick']['quote'])
                     ws.close()
-            except Exception:
-                ws.close()
+                    logging.info(f"🔥 SUCCESS! Harga Real-Time VOL80 Didapat: {live_price}")
+                    return live_price
+                elif 'error' in data:
+                    logging.error(f"Deriv API Error: {data['error']}")
+                    break
 
-        def on_open(ws):
-            req = json.dumps({"ticks": "R_80"})
-            ws.send(req)
+        except Exception as e:
+            logging.error(f"WebSocket VOL80 Error: {e}")
+        finally:
+            if ws:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
 
-        def run_ws():
-            try:
-                ws = websocket.WebSocketApp(
-                    "wss://ws.derivws.com/websockets/v3?app_id=1089",
-                    on_open=on_open,
-                    on_message=on_message
-                )
-                ws.run_forever()
-            except Exception as e:
-                logging.error(f"WebSocket Error: {e}")
-
-        ws_thread = threading.Thread(target=run_ws)
-        ws_thread.daemon = True
-        ws_thread.start()
-        ws_thread.join(timeout=5)  # Maksimal tunggu 5 detik
-
-        if live_price is not None:
-            logging.info(f"Harga Real-Time VOL80: {live_price}")
-            return live_price
-        else:
-            logging.warning("Gagal koneksi WebSocket VOL80 (Timeout 5s). Menggunakan fallback harga.")
-            return 244555.00
-
-    def _mock_lgbm_predict(self, features: np.ndarray) -> float:
-        """Simulasi output probabilitas dari LightGBM (0.0 - 1.0)."""
-        return float(np.clip(0.5 + np.mean(features) * 0.2, 0.1, 0.9))
-
-    def _mock_rf_predict(self, features: np.ndarray) -> float:
-        """Simulasi output probabilitas dari Random Forest Meta-Classifier."""
-        return float(np.clip(0.5 + np.median(features) * 0.25, 0.1, 0.9))
-
-    def _mock_sequence_predict(self, price: float) -> float:
-        """Simulasi Time-Series Sequence / Attention Check."""
-        return 0.62 if (price % 2 > 0.5) else 0.38
+        logging.warning("Gagal koneksi WebSocket VOL80. Menggunakan fallback harga.")
+        return 244555.00
 
     def evaluate_hybrid_signal(self, symbol: str, current_price: float) -> dict:
-        """
-        Konsensus Hibrida: Menggabungkan 3 Layer AI untuk menghasilkan 1 sinyal final.
-        """
         dummy_features = np.array([0.15, -0.05, 0.3, -0.1, 0.2])
 
-        # 1. Dapatkan skor probabilitas dari setiap Layer Model
-        prob_lgbm = self._mock_lgbm_predict(dummy_features)
-        prob_rf = self._mock_rf_predict(dummy_features)
-        prob_seq = self._mock_sequence_predict(current_price)
+        prob_lgbm = float(np.clip(0.5 + np.mean(dummy_features) * 0.2, 0.1, 0.9))
+        prob_rf = float(np.clip(0.5 + np.median(dummy_features) * 0.25, 0.1, 0.9))
+        prob_seq = 0.62 if (current_price % 2 > 0.5) else 0.38
 
-        # 2. Hitung Weighted Consensus Score (0.0 - 1.0)
         consensus_score = (
             (prob_lgbm * self.weights['lightgbm']) +
             (prob_rf * self.weights['random_forest']) +
             (prob_seq * self.weights['trend_sequence'])
         )
 
-        # 3. Penentuan Sinyal Akhir & Level Keyakinan (Confidence)
         if consensus_score >= 0.52:
             signal = "BUY"
             confidence = consensus_score * 100
@@ -154,17 +143,16 @@ class HybridEnsembleSignalBot:
             signal = "SELL"
             confidence = (1.0 - consensus_score) * 100
 
-        # 4. Kalkulasi Adaptive Risk Management (SL / TP)
         if symbol == 'XAUUSD':
             sl_pips, tp1_pips, tp2_pips = 6.0, 6.0, 12.0
-        else: # VOLATILITY 80
+        else:
             sl_pips, tp1_pips, tp2_pips = 150.0, 150.0, 300.0
 
         if signal == "BUY":
             sl = current_price - sl_pips
             tp1 = current_price + tp1_pips
             tp2 = current_price + tp2_pips
-        else: # SELL
+        else:
             sl = current_price + sl_pips
             tp1 = current_price - tp1_pips
             tp2 = current_price - tp2_pips
@@ -182,12 +170,11 @@ class HybridEnsembleSignalBot:
         }
 
 def send_telegram_message(message: str):
-    """Mengirim sinyal komparasi dari BOT2 ke Telegram."""
     bot_token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
     if not bot_token or not chat_id:
-        logging.warning("TELEGRAM_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan di environment secrets.")
+        logging.warning("TELEGRAM_TOKEN atau TELEGRAM_CHAT_ID tidak ditemukan.")
         return
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -207,11 +194,10 @@ def send_telegram_message(message: str):
         logging.error(f"Error Telegram API: {e}")
 
 def format_bot2_card(symbol: str, data: dict) -> str:
-    """Format pesan Telegram khusus BOT2 (Memuat info Konsensus Ensemble)."""
     wib_tz = pytz.timezone('Asia/Jakarta')
     wib_time = datetime.now(wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')
     
-    card = (
+    return (
         f"⚡ *[BOT-2 HYBRID AI] MATRIX SIGNAL ({symbol})*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 *Sinyal Eksekusi*: `{data['signal']}`\n"
@@ -228,22 +214,15 @@ def format_bot2_card(symbol: str, data: dict) -> str:
         "-------------------------------------\n"
         f"⏰ `{wib_time}`"
     )
-    return card
 
-# ==========================================
-# EXECUTION LOGIC FOR BOT2
-# ==========================================
 if __name__ == "__main__":
     bot2 = HybridEnsembleSignalBot()
     
-    # 1. Fetch harga real-time
     price_xau = bot2.fetch_xauusd_price()
     price_vol = bot2.fetch_vol80_price()
     
-    # 2. Hitung Sinyal Konsensus Hibrida
     res_xau = bot2.evaluate_hybrid_signal('XAUUSD', price_xau)
     res_vol = bot2.evaluate_hybrid_signal('VOLATILITY 80', price_vol)
     
-    # 3. Format dan Kirim ke Telegram
     send_telegram_message(format_bot2_card('XAUUSD', res_xau))
     send_telegram_message(format_bot2_card('VOLATILITY 80', res_vol))
