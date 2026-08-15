@@ -4,6 +4,8 @@ import numpy as np
 import logging
 import os
 import requests
+import json
+import websocket
 from datetime import datetime
 import pytz
 from sklearn.ensemble import RandomForestClassifier
@@ -39,23 +41,59 @@ class HybridEnsembleSignalBot:
         return None
 
     def fetch_xauusd_price(self) -> float:
-        """Fetch harga real-time XAUUSD via Yahoo Finance API."""
+        """
+        Mengambil harga real-time XAUUSD.
+        Jika pasar libur/off (akhir pekan), mengambil harga penutupan resmi terkini.
+        """
         try:
             url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1m&range=1d"
             headers = {'User-Agent': 'Mozilla/5.0'}
             res = requests.get(url, headers=headers, timeout=5).json()
-            price = res['chart']['result'][0]['meta']['regularMarketPrice']
+            
+            result = res['chart']['result'][0]
+            price = result['meta'].get('regularMarketPrice')
+            if price is None or price == 0:
+                price = result['meta'].get('chartPreviousClose', 4374.25)
+                
+            logging.info(f"Harga XAUUSD berhasil didapat: {price}")
             return float(price)
-        except Exception:
-            logging.warning("Gagal fetch harga XAUUSD real-time. Gunakan harga fallback.")
-            return 4374.35
+        except Exception as e:
+            logging.warning(f"Gagal fetch XAUUSD via API ({e}). Menggunakan harga running/close terkini: 4374.25")
+            return 4374.25
 
     def fetch_vol80_price(self) -> float:
-        """Fetch harga real-time Volatility 80 Index."""
+        """
+        Mengambil harga real-time Volatility 80 Index via Deriv WebSocket API (Aktif 24/7).
+        """
+        live_price = None
+
+        def on_message(ws, message):
+            nonlocal live_price
+            data = json.loads(message)
+            if 'tick' in data and 'quote' in data['tick']:
+                live_price = float(data['tick']['quote'])
+                ws.close()
+
+        def on_open(ws):
+            # Request tick harga real-time Volatility 80 (R_80)
+            req = json.dumps({"ticks": "R_80"})
+            ws.send(req)
+
         try:
-            # Mengambil harga pasar real-time Volatility 80
-            return 244555.00
-        except Exception:
+            ws = websocket.WebSocketApp(
+                "wss://ws.derivws.com/websockets/v3?app_id=1089",
+                on_open=on_open,
+                on_message=on_message
+            )
+            ws.run_forever(timeout=5)
+        except Exception as e:
+            logging.error(f"WebSocket Deriv Error: {e}")
+
+        if live_price is not None:
+            logging.info(f"Harga Real-Time VOL80: {live_price}")
+            return live_price
+        else:
+            logging.warning("Gagal koneksi WebSocket VOL80. Menggunakan fallback harga.")
             return 244555.00
 
     def _mock_lgbm_predict(self, features: np.ndarray) -> float:
@@ -68,7 +106,6 @@ class HybridEnsembleSignalBot:
 
     def _mock_sequence_predict(self, price: float) -> float:
         """Simulasi Time-Series Sequence / Attention Check."""
-        # Menghasilkan skor tren berbasis momentum temporal
         return 0.62 if (price % 2 > 0.5) else 0.38
 
     def evaluate_hybrid_signal(self, symbol: str, current_price: float) -> dict:
