@@ -1,0 +1,9 @@
+pandas
+numpy
+joblib
+requests
+websocket-client
+scikit-learn
+lightgbm
+yfinance
+pytz
