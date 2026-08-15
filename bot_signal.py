@@ -42,7 +42,7 @@ class HybridEnsembleSignalBot:
         if symbol == 'XAUUSD':
             symbols_to_try = ["frxXAUUSD", "XAUUSD", "gold"]
         else:
-            symbols_to_try = ["R_80"]
+            symbols_to_try = ["R_80", "R80", "VOLT80"]
 
         app_id = "1089"
         ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
@@ -55,7 +55,7 @@ class HybridEnsembleSignalBot:
                     "ticks_history": deriv_symbol,
                     "count": count,
                     "end": "latest",
-                    "granularity": 60, # Dirobah ka 60 detik (TF 1M) supados hargana akurat & sinkron jeung MT5
+                    "granularity": 60, # TF 1 Menit supados akurat & sinkron
                     "style": "candles"
                 }
                 ws.send(json.dumps(req))
@@ -83,8 +83,8 @@ class HybridEnsembleSignalBot:
 
     def extract_features_and_indicators(self, df: pd.DataFrame, symbol: str):
         if df.empty or len(df) < 30:
-            default_price = 4374.25 if symbol == 'XAUUSD' else 249185.0
-            return None, default_price, 5.0, 50.0
+            default_price = 4375.97 if symbol == 'XAUUSD' else 250357.0
+            return None, default_price, 500.0 if symbol != 'XAUUSD' else 5.0, 50.0
 
         close = np.array(df['Close'].values, dtype=float).ravel()
         high = np.array(df['High'].values, dtype=float).ravel()
