@@ -85,7 +85,8 @@ class HybridEnsembleSignalBot:
                 on_open=on_open,
                 on_message=on_message
             )
-            ws.run_forever(timeout=5)
+            # Menggunakan socket_timeout agar tidak melempar unexpected keyword argument error
+            ws.run_forever(socket_timeout=5)
         except Exception as e:
             logging.error(f"WebSocket Deriv Error: {e}")
 
