@@ -316,7 +316,7 @@ def send_daily_report(bot_instance):
 if __name__ == "__main__":
     bot = SuperAIXAUUSDBot(model_path='model_xauusd.pkl')
     
-    # 1. Kirim notif startup
+    # 1. Kirim notif startup (Mung sakali pas bot mimiti hirup)
     send_startup_notification(bot)
     
     last_daily_report_date = None
@@ -325,7 +325,7 @@ if __name__ == "__main__":
     while True:
         now_wib = datetime.now(bot.wib_tz)
         
-        # Laporan rutin jam 06.00 WIB
+        # 2. Laporan rutin jam 06.00 WIB (Mung sakali sadinten)
         if now_wib.hour == 6 and now_wib.minute == 0:
             if last_daily_report_date != now_wib.date():
                 send_daily_report(bot)
@@ -337,24 +337,25 @@ if __name__ == "__main__":
         if res["valid"]:
             current_signal = res["signal"]
             
-            # Cek naha sinyal ieu béda jeung sateuacanna (Lawan arah / Sinyal Anyar)
+            # 3. Logika Anti-Spam Sinyal:
+            # - Mun can kungsi ngirim sinyal, kirimkeun.
+            # - Mun sinyalna robah (lawan arah), kirim alert reversal.
+            # - Mun sinyalna masih sarua jeung sateuacanna, TEU KUDU KIRIM NOTIF ULANG (anteng di log wungkul).
             if bot.last_sent_signal is None:
-                # Sinyal munggaran kapingguh
                 msg = format_signal_card(res, is_reversal=False)
                 send_telegram_message(msg)
                 bot.last_sent_signal = current_signal
                 logging.info(f"✅ Sinyal awal {current_signal} terkirim!")
                 
             elif bot.last_sent_signal != current_signal:
-                # KASUS LAWAN ARAH: Kirim notif alert close & reverse
                 msg = format_signal_card(res, is_reversal=True)
                 send_telegram_message(msg)
                 bot.last_sent_signal = current_signal
                 logging.info(f"🚨 Sinyal berbalik arah! Alert close & reverse dikirim: {current_signal}")
                 
             else:
-                # Sinyal sarua jeung sateuacanna, JANGAN KIRIM NOTIF (Cegah spam)
-                logging.info(f"⏳ Sinyal masih {current_signal} (Aman, teu ngirim notif ulang supados henteu spam).")
+                # Sinyal sarua, amankeun tina spam (teu ngirim pesen ka telegram)
+                logging.info(f"⏳ Sinyal masih {current_signal} (Aman, teu ngirim notif ulang).")
         else:
             logging.info("⏳ Market XAUUSD di-skip (Teu acan nyumponan sarat keyakinan >75% / TP <100 pips).")
 
