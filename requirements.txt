@@ -1,9 +1,8 @@
-pandas
-numpy
-joblib
-requests
-websocket-client
-scikit-learn
-lightgbm
-yfinance
-pytz
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.6.1
+xgboost==2.0.3
+joblib==1.4.2
+requests==2.32.3
+websocket-client==1.8.0
+pytz==2024.1
