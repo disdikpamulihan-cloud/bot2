@@ -31,7 +31,15 @@ class SuperAIXAUUSDBot:
                 logging.info(f"✅ Sukses memuat model AI XAUUSD dari {path}")
                 return model
             except Exception as e:
-                logging.warning(f"⚠️ Gagal load model standar ({e}).")
+                logging.warning(f"⚠️ Gagal load model standar ({e}). Mencoba mode aman/fallback...")
+                try:
+                    import xgboost as xgb
+                    booster = xgb.Booster()
+                    booster.load_model(path)
+                    logging.info(f"✅ Sukses memuat XGBoost Booster langsung dari {path}")
+                    return booster
+                except Exception as e2:
+                    logging.warning(f"⚠️ Gagal total load model: {e2}. Bot bakal ngagunakeun Intelligent Indicator Fallback.")
         return None
 
     def _extract_model(self, model_obj):
@@ -134,8 +142,9 @@ class SuperAIXAUUSDBot:
                 if isinstance(actual_model, xgb.Booster):
                     dmatrix = xgb.DMatrix(input_df.values)
                     preds = actual_model.predict(dmatrix)
-                    prediction = 1 if preds[0] > 0.5 else 0
-                    confidence = float(preds[0] * 100 if preds[0] <= 1.0 else 85.0)
+                    pred_val = preds[0] if not isinstance(preds, np.ndarray) else preds.item(0)
+                    prediction = 1 if pred_val > 0.5 else 0
+                    confidence = float(pred_val * 100 if pred_val <= 1.0 else 85.0)
                 else:
                     if isinstance(self.model_xauusd, dict) and 'scaler' in self.model_xauusd:
                         input_data = self.model_xauusd['scaler'].transform(input_df.values)
