@@ -27,7 +27,6 @@ class SmartXAUUSDBot:
         return None
 
     def fetch_deriv_candles(self, symbol="frxXAUUSD", count=200, granularity=60):
-        """Ambil data candle Deriv WebSocket"""
         app_id = "1089"
         ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
         ws = None
@@ -57,12 +56,10 @@ class SmartXAUUSDBot:
         return pd.DataFrame()
 
     def calc_indicators(self, df: pd.DataFrame):
-        """Hitung indikator teknikal"""
         close = df['Close'].values
         high = df['High'].values
         low = df['Low'].values
 
-        # RSI (14)
         delta = np.diff(close)
         gain = np.where(delta > 0, delta, 0)
         loss = np.where(delta < 0, -delta, 0)
@@ -71,22 +68,18 @@ class SmartXAUUSDBot:
         rs = avg_gain / (avg_loss + 1e-6)
         rsi = 100 - (100 / (1 + rs))
 
-        # ATR (14)
         tr = np.maximum(high[1:] - low[1:], np.maximum(abs(high[1:] - close[:-1]), abs(low[1:] - close[:-1])))
         atr = pd.Series(tr).rolling(14).mean().iloc[-1]
 
-        # MACD
         ema12 = pd.Series(close).ewm(span=12).mean().iloc[-1]
         ema26 = pd.Series(close).ewm(span=26).mean().iloc[-1]
         macd = ema12 - ema26
 
-        # Bollinger Bands (20)
         ma20 = pd.Series(close).rolling(20).mean().iloc[-1]
         std20 = pd.Series(close).rolling(20).std().iloc[-1]
         upper_bb = ma20 + 2*std20
         lower_bb = ma20 - 2*std20
 
-        # Stochastic (14)
         lowest_low = pd.Series(low).rolling(14).min().iloc[-1]
         highest_high = pd.Series(high).rolling(14).max().iloc[-1]
         stochastic = 100 * (close[-1] - lowest_low) / (highest_high - lowest_low + 1e-6)
@@ -102,7 +95,6 @@ class SmartXAUUSDBot:
         }
 
     def evaluate_signal(self):
-        """Evaluasi sinyal multi-timeframe"""
         df1m = self.fetch_deriv_candles(count=200, granularity=60)
         df15m = self.fetch_deriv_candles(count=200, granularity=900)
 
@@ -112,11 +104,10 @@ class SmartXAUUSDBot:
         ind1m = self.calc_indicators(df1m)
         ind15m = self.calc_indicators(df15m)
 
-        # Rule sederhana: konfirmasi multi-timeframe
         signal = None
-        if ind1m["rsi"] < 30 and ind15m["macd"] > 0 and ind1m["price"] < ind1m["lower_bb"]:
+        if ind1m["rsi"] < 40 and ind15m["macd"] > 0 and ind1m["price"] < ind1m["lower_bb"]:
             signal = "BUY"
-        elif ind1m["rsi"] > 70 and ind15m["macd"] < 0 and ind1m["price"] > ind1m["upper_bb"]:
+        elif ind1m["rsi"] > 60 and ind15m["macd"] < 0 and ind1m["price"] > ind1m["upper_bb"]:
             signal = "SELL"
 
         valid = signal is not None and (ind1m["stochastic"] < 20 or ind1m["stochastic"] > 80)
