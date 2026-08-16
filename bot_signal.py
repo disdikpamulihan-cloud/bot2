@@ -31,15 +31,7 @@ class SuperAIXAUUSDBot:
                 logging.info(f"✅ Sukses memuat model AI XAUUSD dari {path}")
                 return model
             except Exception as e:
-                logging.warning(f"⚠️ Gagal load model standar ({e}). Mencoba mode aman/fallback...")
-                try:
-                    import xgboost as xgb
-                    booster = xgb.Booster()
-                    booster.load_model(path)
-                    logging.info(f"✅ Sukses memuat XGBoost Booster langsung dari {path}")
-                    return booster
-                except Exception as e2:
-                    logging.warning(f"⚠️ Gagal total load model: {e2}. Bot bakal ngagunakeun Intelligent Indicator Fallback.")
+                logging.warning(f"⚠️ Gagal load model standar ({e}). Bot bakal ngagunakeun Intelligent Indicator Fallback.")
         return None
 
     def _extract_model(self, model_obj):
@@ -146,15 +138,20 @@ class SuperAIXAUUSDBot:
                     prediction = 1 if pred_val > 0.5 else 0
                     confidence = float(pred_val * 100 if pred_val <= 1.0 else 85.0)
                 else:
+                    # Penanganan Model Scikit-Learn / Pipeline standar
                     if isinstance(self.model_xauusd, dict) and 'scaler' in self.model_xauusd:
                         input_data = self.model_xauusd['scaler'].transform(input_df.values)
                     else:
                         input_data = input_df.values
                     
-                    prediction = actual_model.predict(input_data)[0]
+                    preds = actual_model.predict(input_data)
+                    prediction = int(preds[0])
+                    
                     if hasattr(actual_model, "predict_proba"):
                         probs = actual_model.predict_proba(input_data)[0]
                         confidence = float(max(probs) * 100)
+                    else:
+                        confidence = 80.0
             except Exception as e:
                 logging.warning(f"⚠️ Prediksi model error ({e}), menggunakan Intelligent Indicator Fallback.")
                 prediction = 1 if rsi < 50 else 0
