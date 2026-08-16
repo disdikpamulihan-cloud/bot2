@@ -17,23 +17,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class SuperAIXAUUSDBot:
     """
     SUPER AI TRADING BOT: Dedicated XAUUSD High-Precision Signal Generator
-    Dilengkapi Safe Model Loader & Robust Fallback supaya teu error ku masalah versi XGBoost.
+    Dilengkapi State Memory (Anti-Spam Telegram) & Counter-Signal / Close Alert.
     """
     def __init__(self, model_path: str = "model_xauusd.pkl"):
         self.model_xauusd = self._safe_load(model_path)
         self.wib_tz = pytz.timezone('Asia/Jakarta')
+        self.last_sent_signal = None  # Pelacak sinyal sateuacanna supados henteu spam
 
     def _safe_load(self, path):
         if path and os.path.exists(path):
             try:
-                # Coba load biasa nganggo joblib
                 model = joblib.load(path)
                 logging.info(f"✅ Sukses memuat model AI XAUUSD dari {path}")
                 return model
             except Exception as e:
                 logging.warning(f"⚠️ Gagal load model standar ({e}). Mencoba mode aman/fallback...")
                 try:
-                    # Alternatif: Kadang XGBoost disimpen langsung via booster
                     import xgboost as xgb
                     booster = xgb.Booster()
                     booster.load_model(path)
@@ -139,7 +138,6 @@ class SuperAIXAUUSDBot:
 
         if actual_model is not None and input_df is not None:
             try:
-                # Cek naha nganggo XGBoost Booster langsung
                 import xgboost as xgb
                 if isinstance(actual_model, xgb.Booster):
                     dmatrix = xgb.DMatrix(input_df.values)
@@ -159,7 +157,7 @@ class SuperAIXAUUSDBot:
             except Exception as e:
                 logging.warning(f"⚠️ Prediksi model error ({e}), menggunakan Intelligent Indicator Fallback.")
                 prediction = 1 if rsi < 50 else 0
-                confidence = 78.0 # Set tinggi supaya tetep bisa nembak lamun indikator kuat
+                confidence = 78.0
         else:
             prediction = 1 if rsi < 50 else 0
             confidence = 78.0
@@ -168,7 +166,7 @@ class SuperAIXAUUSDBot:
 
         # Dynamic Risk Management XAUUSD (Target minimal setara 100 pips / 10.0 poin)
         sl_distance = max(atr * 1.2, 5.0)
-        tp1_distance = max(sl_distance * 1.5, 10.0)  # Minimal 10.0 poin (100 pips)
+        tp1_distance = max(sl_distance * 1.5, 10.0) 
         tp2_distance = tp1_distance * 2.0
 
         if signal == "BUY":
@@ -225,34 +223,56 @@ def send_telegram_message(message: str):
     except Exception as e:
         logging.error(f"Error Telegram API: {e}")
 
-def format_signal_card(res: dict) -> str:
-    """Format tampilan pesan Telegram khusus XAUUSD dengan target min 100 pips."""
+def format_signal_card(res: dict, is_reversal: bool = False) -> str:
+    """Format tampilan pesan Telegram. Bisa jadi Sinyal Biasa atawa Alert Close/Lawan Arah."""
     wib_tz = pytz.timezone('Asia/Jakarta')
     wib_time = datetime.now(wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')
     
-    if res['signal'] == "BUY":
-        signal_badge = "🟢🟢 **[STRONG BUY - LONG]** 🟢🟢"
-        action_desc = "Target XAUUSD siap MEROKET naik (Target >100 Pips)! 🚀"
+    if is_reversal:
+        if res['signal'] == "BUY":
+            alert_title = "🚨🚨 **[ALERT: CLOSE SELL & REVERSE TO BUY!]** 🚨🚨"
+            desc = "Tren pasar ngadadak males! Tutup posisi SELL ayeuna, siap-siap pindah BUY!"
+        else:
+            alert_title = "🚨🚨 **[ALERT: CLOSE BUY & REVERSE TO SELL!]** 🚨🚨"
+            desc = "Tren pasar ngadadak turun! Tutup posisi BUY ayeuna, siap-siap pindah SELL!"
+        
+        return (
+            f"⚠️ *[SUPER AI XAUUSD - COUNTER SIGNAL]*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 *Aksi Squel/Close*: {alert_title}\n"
+            f"💡 *Katerangan*: `{desc}`\n"
+            f"💵 *Harga WebSocket*: `{res['price']:.2f}`\n"
+            f"🔥 *Keyakinan AI*: `{res['confidence']:.1f}%`\n"
+            "-------------------------------------\n"
+            f"🛑 *Stop Loss Baru*: `{res['sl']:.2f}`\n"
+            f"🟢 *Target TP 1*: `{res['tp1']:.2f}`\n"
+            "-------------------------------------\n"
+            f"⏰ `{wib_time}`"
+        )
     else:
-        signal_badge = "🔴🔴 **[STRONG SELL - SHORT]** 🔴🔴"
-        action_desc = "Target XAUUSD siap TERJUN bebas (Target >100 Pips)! 📉"
+        if res['signal'] == "BUY":
+            signal_badge = "🟢🟢 **[STRONG BUY - LONG]** 🟢🟢"
+            action_desc = "Target XAUUSD siap MEROKET naik (Target >100 Pips)! 🚀"
+        else:
+            signal_badge = "🔴🔴 **[STRONG SELL - SHORT]** 🔴🔴"
+            action_desc = "Target XAUUSD siap TERJUN bebas (Target >100 Pips)! 📉"
 
-    return (
-        f"🤖 *[SUPER AI XAUUSD BOT - SIGNAL]*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 *Sinyal Eksekusi*: {signal_badge}\n"
-        f"💡 *Analisis*: `{action_desc}`\n"
-        f"💵 *Harga WebSocket (Feed Bot)*: `{res['price']:.2f}`\n"
-        f"🔍 *(Cocokkeun jeung Harga Bid/Ask MT5)*\n"
-        f"🔥 *Keyakinan AI (High Conf)*: `{res['confidence']:.1f}%`\n"
-        f"📊 *RSI*: `{res['rsi']:.1f}` | *ATR*: `{res['atr']:.2f}`\n"
-        "-------------------------------------\n"
-        f"🛑 *Stop Loss (Anti-SL)*: `{res['sl']:.2f}`\n"
-        f"🟢 *Target TP 1 (Aman)*: `{res['tp1']:.2f}`\n"
-        f"🚀 *Target TP 2 (Runner)*: `{res['tp2']:.2f}`\n"
-        "-------------------------------------\n"
-        f"⏰ `{wib_time}`"
-    )
+        return (
+            f"🤖 *[SUPER AI XAUUSD BOT - SIGNAL]*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 *Sinyal Eksekusi*: {signal_badge}\n"
+            f"💡 *Analisis*: `{action_desc}`\n"
+            f"💵 *Harga WebSocket (Feed Bot)*: `{res['price']:.2f}`\n"
+            f"🔍 *(Cocokkeun jeung Harga Bid/Ask MT5)*\n"
+            f"🔥 *Keyakinan AI (High Conf)*: `{res['confidence']:.1f}%`\n"
+            f"📊 *RSI*: `{res['rsi']:.1f}` | *ATR*: `{res['atr']:.2f}`\n"
+            "-------------------------------------\n"
+            f"🛑 *Stop Loss (Anti-SL)*: `{res['sl']:.2f}`\n"
+            f"🟢 *Target TP 1 (Aman)*: `{res['tp1']:.2f}`\n"
+            f"🚀 *Target TP 2 (Runner)*: `{res['tp2']:.2f}`\n"
+            "-------------------------------------\n"
+            f"⏰ `{wib_time}`"
+        )
 
 def send_startup_notification(bot_instance):
     """Mengirim notifikasi startup lengkap dengan harga real-time terkini."""
@@ -269,7 +289,7 @@ def send_startup_notification(bot_instance):
         f"💵 *Harga Real-Time XAUUSD*: `{current_price:.2f}`\n"
         f"🔍 *(Bandingkeun sareng MT5 ayeuna)*\n"
         f"📊 *RSI*: `{rsi:.1f}` | *ATR*: `{atr:.2f}`\n"
-        "🛡️ Sistem siap ngawas pasar & nyaring sinyal TP >100 pips.\n"
+        "🛡️ Mode Anti-Spam Aktif: Notifikasi dikirim ngan sakali per sinyal.\n"
         f"⏰ `{wib_time}`"
     )
     send_telegram_message(msg)
@@ -298,17 +318,16 @@ def send_daily_report(bot_instance):
 if __name__ == "__main__":
     bot = SuperAIXAUUSDBot(model_path='model_xauusd.pkl')
     
-    # 1. Kirim notif startup lengkep sareng harga real-time
+    # 1. Kirim notif startup
     send_startup_notification(bot)
     
-    # Variabel pelacak laporan harian supaya teu ngirim sababaraha kali di jam 06.00
     last_daily_report_date = None
 
-    # Loop utama monitoring (Bisa dijalankeun salawasna di VPS)
+    # Loop utama monitoring
     while True:
         now_wib = datetime.now(bot.wib_tz)
         
-        # Cek naha geus waktuna laporan rutin jam 06.00 WIB
+        # Laporan rutin jam 06.00 WIB
         if now_wib.hour == 6 and now_wib.minute == 0:
             if last_daily_report_date != now_wib.date():
                 send_daily_report(bot)
@@ -316,12 +335,30 @@ if __name__ == "__main__":
 
         # Evaluasi pasar berkala
         res = bot.evaluate_market()
+        
         if res["valid"]:
-            msg = format_signal_card(res)
-            send_telegram_message(msg)
-            logging.info("✅ Sinyal XAUUSD valid & terkirim!")
+            current_signal = res["signal"]
+            
+            # Cek naha sinyal ieu béda jeung sateuacanna (Lawan arah / Sinyal Anyar)
+            if bot.last_sent_signal is None:
+                # Sinyal munggaran kapingguh
+                msg = format_signal_card(res, is_reversal=False)
+                send_telegram_message(msg)
+                bot.last_sent_signal = current_signal
+                logging.info(f"✅ Sinyal awal {current_signal} terkirim!")
+                
+            elif bot.last_sent_signal != current_signal:
+                # KASUS LAWAN ARAH: Kirim notif alert close & reverse
+                msg = format_signal_card(res, is_reversal=True)
+                send_telegram_message(msg)
+                bot.last_sent_signal = current_signal
+                logging.info(f"🚨 Sinyal berbalik arah! Alert close & reverse dikirim: {current_signal}")
+                
+            else:
+                # Sinyal sarua jeung sateuacanna, JANGAN KIRIM NOTIF (Cegah spam)
+                logging.info(f"⏳ Sinyal masih {current_signal} (Aman, teu ngirim notif ulang supados henteu spam).")
         else:
-            logging.info("⏳ Market XAUUSD di-skip (Belum memenuhi syarat keyakinan >75% / target TP <100 pips).")
+            logging.info("⏳ Market XAUUSD di-skip (Teu acan nyumponan sarat keyakinan >75% / TP <100 pips).")
 
         # Jeda 60 detik (1 menit) sateuacan mariksa deui pasar
         time_module.sleep(60)
