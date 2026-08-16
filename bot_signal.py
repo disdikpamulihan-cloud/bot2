@@ -31,15 +31,7 @@ class SuperAIXAUUSDBot:
                 logging.info(f"✅ Sukses memuat model AI XAUUSD dari {path}")
                 return model
             except Exception as e:
-                logging.warning(f"⚠️ Gagal load model standar ({e}). Mencoba mode aman/fallback...")
-                try:
-                    import xgboost as xgb
-                    booster = xgb.Booster()
-                    booster.load_model(path)
-                    logging.info(f"✅ Sukses memuat XGBoost Booster langsung dari {path}")
-                    return booster
-                except Exception as e2:
-                    logging.warning(f"⚠️ Gagal total load model: {e2}. Bot bakal ngagunakeun Intelligent Indicator Fallback.")
+                logging.warning(f"⚠️ Gagal load model standar ({e}).")
         return None
 
     def _extract_model(self, model_obj):
