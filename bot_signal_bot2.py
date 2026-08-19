@@ -13,7 +13,7 @@ import time as time_module
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class Bot2Mastermind:
+class Bot2UltraSniper:
     def __init__(self, model_path: str = "model_bot2.pkl"):
         self.model = self._safe_load(model_path)
         self.wib_tz = pytz.timezone('Asia/Jakarta')
@@ -24,7 +24,7 @@ class Bot2Mastermind:
         if path and os.path.exists(path):
             try:
                 m = joblib.load(path)
-                logging.info(f"✅ Bot 2: Berhasil memuat model eksklusif dari {path}")
+                logging.info(f"✅ Bot 2 Ultra: Berhasil memuat model eksklusif dari {path}")
                 return m
             except Exception as e:
                 logging.warning(f"⚠️ Bot 2 Gagal muat model: {e}")
@@ -92,50 +92,54 @@ class Bot2Mastermind:
 
         ma200 = close.rolling(window=200).mean().iloc[-1]
         ma50 = close.rolling(window=50).mean().iloc[-1]
-        ma20 = close.rolling(window=20).mean().iloc[-1]
         
         tr = np.maximum(high.values[1:] - low.values[1:], np.maximum(abs(high.values[1:] - close.values[:-1]), abs(low.values[1:] - close.values[:-1])))
         atr = float(np.mean(tr[-14:]) if len(tr) >= 14 else (high.iloc[-1] - low.iloc[-1]))
         
         rsi_s = self.calculate_rsi(close, 14)
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
+        momentum = float(close.diff(3).iloc[-1])
 
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
         avg_body = np.mean(abs(close.iloc[-10:] - open_p.iloc[-10:]))
         h5 = np.max(high.values[-6:-1])
         l5 = np.min(low.values[-6:-1])
 
-        # Dasar Kondisi
-        is_buy = (current_price > ma200) and (current_price > h5) and (atr >= 0.5)
-        is_sell = (current_price < ma200) and (current_price < l5) and (atr >= 0.5)
+        # Saringan Syarat Teknis Murni
+        is_buy = (current_price > ma200) and (current_price > h5) and (atr >= 0.6)
+        is_sell = (current_price < ma200) and (current_price < l5) and (atr >= 0.6)
 
-        # AI Mastermind Filter
-        ai_ok = True
+        # AI Ultra-Precision Filter (Probabilitas wajib > 78%)
+        ai_ok = False
+        confidence = 0.0
         if self.model is not None:
             try:
-                features = np.array([[float(atr), float(body_size), float(current_price - ma200), float(ma50 - ma20), float(rsi)]])
+                features = np.array([[float(atr), float(body_size), float(current_price - ma200), float(momentum), float(rsi)]])
                 pred = self.model.predict(features)[0]
-                prob = np.max(self.model.predict_proba(features)) if hasattr(self.model, 'predict_proba') else 1.0
+                probs = self.model.predict_proba(features)[0]
+                confidence = float(np.max(probs))
                 
-                # Lamun prediksinya teu akur atanapi probabilitas di handap 65%, reject
-                if is_buy and (pred == 0 or prob < 0.65): ai_ok = False
-                if is_sell and (pred == 1 or prob < 0.65): ai_ok = False
+                # Ngan disatujuan lamun prediksi AI akurat tur keyakinanna luhur (di luhur 78%)
+                if is_buy and pred == 1 and confidence >= 0.78:
+                    ai_ok = True
+                elif is_sell and pred == 0 and confidence >= 0.78:
+                    ai_ok = True
             except Exception as e:
-                logging.warning(f"AI Check Error: {e}")
+                logging.warning(f"AI Error: {e}")
 
-        # Eksekusi Matang
-        buy_signal = is_buy and ai_ok and (body_size > (avg_body * 1.1)) and (close.iloc[-1] > open_p.iloc[-1])
-        sell_signal = is_sell and ai_ok and (body_size > (avg_body * 1.1)) and (close.iloc[-1] < open_p.iloc[-1])
+        # Eksekusi Matang Ngajelegur
+        buy_signal = is_buy and ai_ok and (body_size > (avg_body * 1.3)) and (close.iloc[-1] > open_p.iloc[-1])
+        sell_signal = is_sell and ai_ok and (body_size > (avg_body * 1.3)) and (close.iloc[-1] < open_p.iloc[-1])
 
         if buy_signal:
-            return {"valid": True, "warning": False, "signal": "BUY", "price": current_price, "atr": atr, "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 3.0)}
+            return {"valid": True, "warning": False, "signal": "BUY", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price - (atr * 1.2), "tp": current_price + (atr * 2.5)}
         elif sell_signal:
-            return {"valid": True, "warning": False, "signal": "SELL", "price": current_price, "atr": atr, "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 3.0)}
+            return {"valid": True, "warning": False, "signal": "SELL", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price + (atr * 1.2), "tp": current_price - (atr * 2.5)}
 
-        # Aba-aba Persiapan (Warning 5 Menit)
-        if is_buy and ai_ok:
+        # Aba-aba Persiapan 5 Menit
+        if is_buy and confidence >= 0.65:
             return {"valid": False, "warning": True, "signal": "BUY", "price": current_price, "atr": atr}
-        elif is_sell and ai_ok:
+        elif is_sell and confidence >= 0.65:
             return {"valid": False, "warning": True, "signal": "SELL", "price": current_price, "atr": atr}
 
         return {"valid": False, "warning": False}
@@ -149,11 +153,10 @@ def send_tg(msg):
     except: pass
 
 if __name__ == "__main__":
-    bot = Bot2Mastermind('model_bot2.pkl')
+    bot = Bot2UltraSniper('model_bot2.pkl')
     
-    # Startup Notif Bot 2
     if not os.path.exists(bot.startup_file):
-        send_tg("🚀 *[BOT 2: MASTERMIND AI AKTIF]*\n🌟 Sistem Eksklusif Siap Beraksi!\n📈 XAUUSD Multi-Model Ready.")
+        send_tg("🚀 *[BOT 2 ULTRA SNIPER AKTIF]*\n💎 Sistem AI Akurasi Tinggi Siap Beraksi!")
         try:
             with open(bot.startup_file, "w") as f: json.dump({"ok": True}, f)
         except: pass
@@ -166,9 +169,10 @@ if __name__ == "__main__":
             last_sig = bot.load_state()
             if sig != last_sig:
                 card = (
-                    f"💎 *[BOT 2 MASTERMIND SIGNAL]* 💎\n"
+                    f"🎯 *[BOT 2 SNIPER: NGAJELEGUR]* 🎯\n"
                     "━━━━━━━━━━━━━━━━━━━━━\n"
                     f"🔥 *EKSEKUSI*: `STRONG {sig}`\n"
+                    f"🧠 *Keyakinan AI*: `{res['conf']*100:.1f}%`\n"
                     f"💵 *Harga Masuk*: `{res['price']:.2f}`\n"
                     f"🛑 *Stop Loss*: `{res['sl']:.2f}`\n"
                     f"🎯 *Take Profit*: `{res['tp']:.2f}`\n"
@@ -179,8 +183,8 @@ if __name__ == "__main__":
                 bot.save_state(sig)
         elif res["warning"]:
             warn_card = (
-                f"⚠️ *[BOT 2 PERSIAPAN 5 MENIT]* ⚠️\n"
-                f"🔔 Aba-aba sinyal *{res['signal']}* nuju dibentuk.\n"
+                f"⚠️ *[PERSIAPAN 5 MENIT - NGAJELEGUR]* ⚠️\n"
+                f"🔔 Aba-aba sinyal *{res['signal']}* nuju asak.\n"
                 f"💵 Harga Pantau: `{res['price']:.2f}`"
             )
             send_tg(warn_card)
