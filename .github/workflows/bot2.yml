@@ -1,12 +1,12 @@
-name: Bot 2 Ultra Sniper
+name: Bot 2 Ultra Sniper (Auto-Train & Signal)
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # Bot bakal mariksa unggal 5 menit
-  workflow_dispatch: # Supaya bisa dijalankeun manual lamun hayang
+    - cron: '*/5 * * * *' # Bot bakal jalan otomatis unggal 5 menit
+  workflow_dispatch: # Supaya bisa dijalankeun manual iraha waé
 
 jobs:
-  run-bot:
+  run-bot-mastermind:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -21,6 +21,10 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Auto Train AI Bot 2
+        run: |
+          python train_ai_bot2.py
+
       - name: Execute Bot Signal Script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -28,9 +32,9 @@ jobs:
         run: |
           python bot_signal_bot2.py
 
-      - name: Commit & Push Update (State/Model)
+      - name: Commit & Push Model/State Update
         run: |
-          git config --global user.name "Bot-Auto-Commit"
-          git config --global user.email "bot@github.com"
+          git config --global user.name "Bot2-Auto-Trainer"
+          git config --global user.email "bot2@github.com"
           git add .
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update State Bot 2" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update Bot 2 AI Model and State" && git push)
