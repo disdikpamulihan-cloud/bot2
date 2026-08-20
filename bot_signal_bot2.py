@@ -18,13 +18,12 @@ class Bot2UltraSniper:
         self.model = self._safe_load(model_path)
         self.wib_tz = pytz.timezone('Asia/Jakarta')
         self.state_file = "bot2_state.json"
-        self.startup_file = "bot2_startup.json"
 
     def _safe_load(self, path):
         if path and os.path.exists(path):
             try:
                 m = joblib.load(path)
-                logging.info(f"✅ Bot 2 Ultra: Berhasil memuat model eksklusif dari {path}")
+                logging.info(f"✅ Bot 2 Ultra: Berhasil memuat model dari {path}")
                 return m
             except Exception as e:
                 logging.warning(f"⚠️ Bot 2 Gagal muat model: {e}")
@@ -81,7 +80,7 @@ class Bot2UltraSniper:
 
     def evaluate_strategy(self) -> dict:
         df = self.fetch_data(count=250)
-        if df.empty or len(df) < 210: return {"valid": False, "warning": False}
+        if df.empty or len(df) < 210: return {"valid": False}
 
         df_closed = df.iloc[:-1]
         close = df_closed['Close']
@@ -105,11 +104,11 @@ class Bot2UltraSniper:
         h5 = np.max(high.values[-6:-1])
         l5 = np.min(low.values[-6:-1])
 
-        # Saringan Syarat Teknis Diperketat (Anti Sinyal Palsu)
+        # Saringan Syarat Teknis Diperketat
         is_buy = (current_price > ma200) and (current_price > ma50) and (current_price > h5) and (atr >= 0.8) and (rsi > 52 and rsi < 75)
         is_sell = (current_price < ma200) and (current_price < ma50) and (current_price < l5) and (atr >= 0.8) and (rsi < 48 and rsi > 25)
 
-        # AI Ultra-Precision Filter (Probabilitas wajib ningkat jadi minimal 85%)
+        # AI Ultra-Precision Filter
         ai_ok = False
         confidence = 0.0
         if self.model is not None:
@@ -119,30 +118,22 @@ class Bot2UltraSniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # Keyakinan AI diperketat pisan jadi 0.85 (85%)
-                if is_buy and pred == 1 and confidence >= 0.85:
-                    ai_ok = True
-                elif is_sell and pred == 0 and confidence >= 0.85:
-                    ai_ok = True
+                # Standar tinggi
+                if is_buy and pred == 1 and confidence >= 0.85: ai_ok = True
+                elif is_sell and pred == 0 and confidence >= 0.85: ai_ok = True
             except Exception as e:
                 logging.warning(f"AI Error: {e}")
 
-        # Eksekusi Matang Ngajelegur jeung TP Dilegana (Risk:Reward 1:3+)
+        # Eksekusi Matang Ngajelegur
         buy_signal = is_buy and ai_ok and (body_size > (avg_body * 1.5)) and (close.iloc[-1] > open_p.iloc[-1])
         sell_signal = is_sell and ai_ok and (body_size > (avg_body * 1.5)) and (close.iloc[-1] < open_p.iloc[-1])
 
         if buy_signal:
-            return {"valid": True, "warning": False, "signal": "BUY", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 4.5)}
+            return {"valid": True, "signal": "BUY", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 4.5)}
         elif sell_signal:
-            return {"valid": True, "warning": False, "signal": "SELL", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.5)}
+            return {"valid": True, "signal": "SELL", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.5)}
 
-        # Aba-aba Persiapan 5 Menit (Dinaékkeun standar konfirmasina)
-        if is_buy and confidence >= 0.75:
-            return {"valid": False, "warning": True, "signal": "BUY", "price": current_price, "atr": atr}
-        elif is_sell and confidence >= 0.75:
-            return {"valid": False, "warning": True, "signal": "SELL", "price": current_price, "atr": atr}
-
-        return {"valid": False, "warning": False}
+        return {"valid": False}
 
 def send_tg(msg):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -155,39 +146,30 @@ def send_tg(msg):
 if __name__ == "__main__":
     bot = Bot2UltraSniper('model_bot2.pkl')
     
-    if not os.path.exists(bot.startup_file):
-        send_tg("🚀 *[BOT 2 ULTRA SNIPER AKTIF - UPDATED]*\n💎 Sistem AI Filter Ketat & TP Ngajelegur Siap Beraksi!")
-        try:
-            with open(bot.startup_file, "w") as f: json.dump({"ok": True}, f)
-        except: pass
-
-    while True:
-        res = bot.evaluate_strategy()
+    # Euweuh while loop deui, langsung dicek jeung di-exit (cocok pikeun GitHub Actions)
+    res = bot.evaluate_strategy()
+    
+    if res["valid"]:
+        sig = res["signal"]
+        last_sig = bot.load_state()
         
-        if res["valid"]:
-            sig = res["signal"]
-            last_sig = bot.load_state()
-            if sig != last_sig:
-                card = (
-                    f"🎯 *[BOT 2 SNIPER: NGAJELEGUR]* 🎯\n"
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔥 *EKSEKUSI*: `STRONG {sig}`\n"
-                    f"🧠 *Keyakinan AI*: `{res['conf']*100:.1f}%`\n"
-                    f"💵 *Harga Masuk*: `{res['price']:.2f}`\n"
-                    f"🛑 *Stop Loss*: `{res['sl']:.2f}`\n"
-                    f"🎯 *Take Profit*: `{res['tp']:.2f}`\n"
-                    "-------------------------------------\n"
-                    f"⏰ *WAKTU*: `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')}`"
-                )
-                send_tg(card)
-                bot.save_state(sig)
-        elif res["warning"]:
-            warn_card = (
-                f"⚠️ *[PERSIAPAN 5 MENIT - NGAJELEGUR]* ⚠️\n"
-                f"🔔 Aba-aba sinyal *{res['signal']}* nuju asak.\n"
-                f"💵 Harga Pantau: `{res['price']:.2f}`"
+        # NGAN ngirim pesen mun aya PAROBAHAN sinyal (ANTI-SPAM)
+        if sig != last_sig:
+            card = (
+                f"🎯 *[BOT 2 SNIPER: NGAJELEGUR]* 🎯\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔥 *EKSEKUSI*: `STRONG {sig}`\n"
+                f"🧠 *Keyakinan AI*: `{res['conf']*100:.1f}%`\n"
+                f"💵 *Harga Masuk*: `{res['price']:.2f}`\n"
+                f"🛑 *Stop Loss*: `{res['sl']:.2f}`\n"
+                f"🎯 *Take Profit*: `{res['tp']:.2f}`\n"
+                "-------------------------------------\n"
+                f"⏰ *WAKTU*: `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')}`"
             )
-            send_tg(warn_card)
-            time_module.sleep(120)
-
-        time_module.sleep(60)
+            send_tg(card)
+            bot.save_state(sig)
+            logging.info(f"✅ Sinyal {sig} suksés dikirim!")
+        else:
+            logging.info(f"ℹ️ Sinyal masih {sig}, teu dikirim deui (Anti-spam).")
+    else:
+        logging.info("ℹ️ Tacan aya sinyal asak.")
