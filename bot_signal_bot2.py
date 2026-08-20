@@ -105,11 +105,11 @@ class Bot2UltraSniper:
         h5 = np.max(high.values[-6:-1])
         l5 = np.min(low.values[-6:-1])
 
-        # Saringan Syarat Teknis Murni
-        is_buy = (current_price > ma200) and (current_price > h5) and (atr >= 0.6)
-        is_sell = (current_price < ma200) and (current_price < l5) and (atr >= 0.6)
+        # Saringan Syarat Teknis Diperketat (Anti Sinyal Palsu)
+        is_buy = (current_price > ma200) and (current_price > ma50) and (current_price > h5) and (atr >= 0.8) and (rsi > 52 and rsi < 75)
+        is_sell = (current_price < ma200) and (current_price < ma50) and (current_price < l5) and (atr >= 0.8) and (rsi < 48 and rsi > 25)
 
-        # AI Ultra-Precision Filter (Probabilitas wajib > 78%)
+        # AI Ultra-Precision Filter (Probabilitas wajib ningkat jadi minimal 85%)
         ai_ok = False
         confidence = 0.0
         if self.model is not None:
@@ -119,27 +119,27 @@ class Bot2UltraSniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # Ngan disatujuan lamun prediksi AI akurat tur keyakinanna luhur (di luhur 78%)
-                if is_buy and pred == 1 and confidence >= 0.78:
+                # Keyakinan AI diperketat pisan jadi 0.85 (85%)
+                if is_buy and pred == 1 and confidence >= 0.85:
                     ai_ok = True
-                elif is_sell and pred == 0 and confidence >= 0.78:
+                elif is_sell and pred == 0 and confidence >= 0.85:
                     ai_ok = True
             except Exception as e:
                 logging.warning(f"AI Error: {e}")
 
-        # Eksekusi Matang Ngajelegur
-        buy_signal = is_buy and ai_ok and (body_size > (avg_body * 1.3)) and (close.iloc[-1] > open_p.iloc[-1])
-        sell_signal = is_sell and ai_ok and (body_size > (avg_body * 1.3)) and (close.iloc[-1] < open_p.iloc[-1])
+        # Eksekusi Matang Ngajelegur jeung TP Dilegana (Risk:Reward 1:3+)
+        buy_signal = is_buy and ai_ok and (body_size > (avg_body * 1.5)) and (close.iloc[-1] > open_p.iloc[-1])
+        sell_signal = is_sell and ai_ok and (body_size > (avg_body * 1.5)) and (close.iloc[-1] < open_p.iloc[-1])
 
         if buy_signal:
-            return {"valid": True, "warning": False, "signal": "BUY", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price - (atr * 1.2), "tp": current_price + (atr * 2.5)}
+            return {"valid": True, "warning": False, "signal": "BUY", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 4.5)}
         elif sell_signal:
-            return {"valid": True, "warning": False, "signal": "SELL", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price + (atr * 1.2), "tp": current_price - (atr * 2.5)}
+            return {"valid": True, "warning": False, "signal": "SELL", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.5)}
 
-        # Aba-aba Persiapan 5 Menit
-        if is_buy and confidence >= 0.65:
+        # Aba-aba Persiapan 5 Menit (Dinaékkeun standar konfirmasina)
+        if is_buy and confidence >= 0.75:
             return {"valid": False, "warning": True, "signal": "BUY", "price": current_price, "atr": atr}
-        elif is_sell and confidence >= 0.65:
+        elif is_sell and confidence >= 0.75:
             return {"valid": False, "warning": True, "signal": "SELL", "price": current_price, "atr": atr}
 
         return {"valid": False, "warning": False}
@@ -156,7 +156,7 @@ if __name__ == "__main__":
     bot = Bot2UltraSniper('model_bot2.pkl')
     
     if not os.path.exists(bot.startup_file):
-        send_tg("🚀 *[BOT 2 ULTRA SNIPER AKTIF]*\n💎 Sistem AI Akurasi Tinggi Siap Beraksi!")
+        send_tg("🚀 *[BOT 2 ULTRA SNIPER AKTIF - UPDATED]*\n💎 Sistem AI Filter Ketat & TP Ngajelegur Siap Beraksi!")
         try:
             with open(bot.startup_file, "w") as f: json.dump({"ok": True}, f)
         except: pass
