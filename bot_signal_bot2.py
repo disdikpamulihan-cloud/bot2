@@ -15,19 +15,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class GeniusBot2Sniper:
     def __init__(self, model_path: str = "model_bot2.pkl"):
-        self.model = self._safe_load(model_path)
+        self.model, self.scaler = self._safe_load(model_path)
         self.wib_tz = pytz.timezone('Asia/Jakarta')
         self.state_file = "bot2_state.json"
 
     def _safe_load(self, path):
         if path and os.path.exists(path):
             try:
-                m = joblib.load(path)
-                logging.info(f"🧠 Genius AI: Model sukses dimuat ti {path}!")
-                return m
+                loaded_data = joblib.load(path)
+                # Lamun disimpen salaku tuple (model, scaler)
+                if isinstance(loaded_data, tuple):
+                    logging.info(f"🧠 Genius AI: Model & Scaler sukses dimuat ti {path}!")
+                    return loaded_data[0], loaded_data[1]
+                else:
+                    logging.info(f"🧠 Genius AI: Model tunggal sukses dimuat ti {path}!")
+                    return loaded_data, None
             except Exception as e:
                 logging.warning(f"⚠️ Gagal muat model: {e}")
-        return None
+        return None, None
 
     def fetch_market_data(self, count: int = 250) -> pd.DataFrame:
         symbols = ["frxXAUUSD", "XAUUSD", "gold"]
@@ -111,7 +116,6 @@ class GeniusBot2Sniper:
         _, _, macd_hist_series = self.calculate_macd(close)
         macd_hist = float(macd_hist_series.iloc[-1]) if not macd_hist_series.empty else 0.0
         
-        momentum = float(close.diff(3).iloc[-1])
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
         
         is_buy_setup = (current_price > ma200) and (ma50 > ma200) and (rsi > 50)
@@ -121,24 +125,27 @@ class GeniusBot2Sniper:
         confidence = 0.0
         if self.model is not None:
             try:
-                # PENTING: Urutan 6 Fitur kudu pas 100% jeung file training Mastermind
                 features = np.array([[
-                    float(atr),                    # 1. ATR
-                    float(body_size),              # 2. BodySize
-                    float(current_price - ma200),  # 3. Close - MA200
-                    float(macd_hist),              # 4. MACD_Hist
-                    float(rsi),                    # 5. RSI
-                    float(ma50 - ma200)            # 6. MA50 - MA200
+                    float(atr), 
+                    float(body_size), 
+                    float(current_price - ma200), 
+                    float(macd_hist),
+                    float(rsi),
+                    float(ma50 - ma200)
                 ]])
+                
+                # Transformasi fitur ngagunakeun scaler lamun aya
+                if self.scaler is not None:
+                    features = self.scaler.transform(features)
                 
                 pred = self.model.predict(features)[0]
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # Wates confidence diset luhur (>75%) sabab ieu model high-accuracy
-                if is_buy_setup and pred == 1 and confidence >= 0.75:
+                # Sinyal dibuka lega sakumaha kahoyong anjeun
+                if is_buy_setup and pred == 1:
                     ai_approved = True
-                elif is_sell_setup and pred == 0 and confidence >= 0.75:
+                elif is_sell_setup and pred == 0:
                     ai_approved = True
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
