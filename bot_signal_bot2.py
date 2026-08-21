@@ -13,7 +13,7 @@ import time as time_module
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class Bot2UltraSniper:
+class GeniusBot2Sniper:
     def __init__(self, model_path: str = "model_bot2.pkl"):
         self.model = self._safe_load(model_path)
         self.wib_tz = pytz.timezone('Asia/Jakarta')
@@ -23,13 +23,13 @@ class Bot2UltraSniper:
         if path and os.path.exists(path):
             try:
                 m = joblib.load(path)
-                logging.info(f"✅ Bot 2 Ultra: Berhasil memuat model dari {path}")
+                logging.info(f"🧠 Genius AI: Model kasohor ti {path} sukses dimuat!")
                 return m
             except Exception as e:
-                logging.warning(f"⚠️ Bot 2 Gagal muat model: {e}")
+                logging.warning(f"⚠️ Gagal muat model: {e}")
         return None
 
-    def fetch_data(self, count: int = 250) -> pd.DataFrame:
+    def fetch_market_data(self, count: int = 250) -> pd.DataFrame:
         symbols = ["frxXAUUSD", "XAUUSD", "gold"]
         app_id = "1089"
         ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
@@ -53,22 +53,24 @@ class Bot2UltraSniper:
                 except:
                     time_module.sleep(2)
                 finally:
-                    if ws: 
+                    if ws:
                         try: ws.close()
                         except: pass
             if attempt < 2: time_module.sleep(3)
         return pd.DataFrame()
 
-    def load_state(self):
+    def load_last_signal(self):
         if os.path.exists(self.state_file):
             try:
-                with open(self.state_file, "r") as f: return json.load(f).get("signal", None)
+                with open(self.state_file, "r") as f:
+                    return json.load(f).get("signal", None)
             except: pass
         return None
 
-    def save_state(self, sig):
+    def save_last_signal(self, sig):
         try:
-            with open(self.state_file, "w") as f: json.dump({"signal": sig}, f)
+            with open(self.state_file, "w") as f:
+                json.dump({"signal": sig}, f)
         except: pass
 
     def calculate_rsi(self, series, period=14):
@@ -78,9 +80,10 @@ class Bot2UltraSniper:
         rs = gain / loss
         return 100 - (100 / (1 + rs))
 
-    def evaluate_strategy(self) -> dict:
-        df = self.fetch_data(count=250)
-        if df.empty or len(df) < 210: return {"valid": False}
+    def evaluate_genius_strategy(self) -> dict:
+        df = self.fetch_market_data(count=250)
+        if df.empty or len(df) < 210:
+            return {"valid": False}
 
         df_closed = df.iloc[:-1]
         close = df_closed['Close']
@@ -99,17 +102,15 @@ class Bot2UltraSniper:
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
         momentum = float(close.diff(3).iloc[-1])
 
-        body_size = abs(close.iloc[-1] - open_p.iloc[-1])
-        avg_body = np.mean(abs(close.iloc[-10:] - open_p.iloc[-10:]))
         h5 = np.max(high.values[-6:-1])
         l5 = np.min(low.values[-6:-1])
+        body_size = abs(close.iloc[-1] - open_p.iloc[-1])
+        avg_body = np.mean(abs(close.iloc[-10:] - open_p.iloc[-10:]))
 
-        # Saringan Syarat Teknis Diperketat
-        is_buy = (current_price > ma200) and (current_price > ma50) and (current_price > h5) and (atr >= 0.8) and (rsi > 52 and rsi < 75)
-        is_sell = (current_price < ma200) and (current_price < ma50) and (current_price < l5) and (atr >= 0.8) and (rsi < 48 and rsi > 25)
+        is_buy_setup = (current_price > ma200) and (current_price > ma50) and (current_price > h5) and (atr >= 0.7) and (rsi > 50 and rsi < 72)
+        is_sell_setup = (current_price < ma200) and (current_price < ma50) and (current_price < l5) and (atr >= 0.7) and (rsi < 50 and rsi > 28)
 
-        # AI Ultra-Precision Filter
-        ai_ok = False
+        ai_approved = False
         confidence = 0.0
         if self.model is not None:
             try:
@@ -118,58 +119,64 @@ class Bot2UltraSniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # Standar tinggi
-                if is_buy and pred == 1 and confidence >= 0.85: ai_ok = True
-                elif is_sell and pred == 0 and confidence >= 0.85: ai_ok = True
+                if is_buy_setup and pred == 1 and confidence >= 0.85:
+                    ai_approved = True
+                elif is_sell_setup and pred == 0 and confidence >= 0.85:
+                    ai_approved = True
             except Exception as e:
-                logging.warning(f"AI Error: {e}")
+                logging.warning(f"AI Prediction Error: {e}")
 
-        # Eksekusi Matang Ngajelegur
-        buy_signal = is_buy and ai_ok and (body_size > (avg_body * 1.5)) and (close.iloc[-1] > open_p.iloc[-1])
-        sell_signal = is_sell and ai_ok and (body_size > (avg_body * 1.5)) and (close.iloc[-1] < open_p.iloc[-1])
+        final_buy = is_buy_setup and ai_approved and (body_size > (avg_body * 1.3)) and (close.iloc[-1] > open_p.iloc[-1])
+        final_sell = is_sell_setup and ai_approved and (body_size > (avg_body * 1.3)) and (close.iloc[-1] < open_p.iloc[-1])
 
-        if buy_signal:
-            return {"valid": True, "signal": "BUY", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 4.5)}
-        elif sell_signal:
-            return {"valid": True, "signal": "SELL", "price": current_price, "atr": atr, "conf": confidence, "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.5)}
+        if final_buy:
+            return {
+                "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
+                "sl": current_price - (atr * 1.5), 
+                "tp": current_price + (atr * 5.0)
+            }
+        elif final_sell:
+            return {
+                "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
+                "sl": current_price + (atr * 1.5), 
+                "tp": current_price - (atr * 5.0)
+            }
 
         return {"valid": False}
 
-def send_tg(msg):
+def send_telegram_alert(message: str):
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id: return
     try:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=5)
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
     except: pass
 
 if __name__ == "__main__":
-    bot = Bot2UltraSniper('model_bot2.pkl')
+    bot = GeniusBot2Sniper('model_bot2.pkl')
     
-    # Euweuh while loop deui, langsung dicek jeung di-exit (cocok pikeun GitHub Actions)
-    res = bot.evaluate_strategy()
+    result = bot.evaluate_genius_strategy()
     
-    if res["valid"]:
-        sig = res["signal"]
-        last_sig = bot.load_state()
+    if result.get("valid"):
+        current_signal = result["signal"]
+        last_signal = bot.load_last_signal()
         
-        # NGAN ngirim pesen mun aya PAROBAHAN sinyal (ANTI-SPAM)
-        if sig != last_sig:
+        if current_signal != last_signal:
             card = (
-                f"🎯 *[BOT 2 SNIPER: NGAJELEGUR]* 🎯\n"
+                f"🩴💥 *[BOT 2: DISABET KU SENDAL JEPIT]* 💥🩴\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔥 *EKSEKUSI*: `STRONG {sig}`\n"
-                f"🧠 *Keyakinan AI*: `{res['conf']*100:.1f}%`\n"
-                f"💵 *Harga Masuk*: `{res['price']:.2f}`\n"
-                f"🛑 *Stop Loss*: `{res['sl']:.2f}`\n"
-                f"🎯 *Take Profit*: `{res['tp']:.2f}`\n"
+                f"🔥 *EKSEKUSI*: `STRONG {current_signal}`\n"
+                f"🧠 *Akurasi AI*: `{result['conf']*100:.1f}%`\n"
+                f"💵 *Harga Masuk (OP)*: `{result['price']:.2f}`\n"
+                f"🛑 *Stop Loss (SL)*: `{result['sl']:.2f}`\n"
+                f"🎯 *Take Profit (TP)*: `{result['tp']:.2f}` (Banting Jauh Boss!)\n"
                 "-------------------------------------\n"
                 f"⏰ *WAKTU*: `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')}`"
             )
-            send_tg(card)
-            bot.save_state(sig)
-            logging.info(f"✅ Sinyal {sig} suksés dikirim!")
+            send_telegram_alert(card)
+            bot.save_last_signal(current_signal)
+            logging.info(f"✅ Sinyal Genius {current_signal} suksés dikirim ka Telegram!")
         else:
-            logging.info(f"ℹ️ Sinyal masih {sig}, teu dikirim deui (Anti-spam).")
+            logging.info(f"ℹ️ Sinyal masih {current_signal}, teu dikirim (Anti-spam aktif).")
     else:
-        logging.info("ℹ️ Tacan aya sinyal asak.")
+        logging.info("ℹ️ Pasar tacan nyugemakeun / AI nolak sinyal palsu.")
