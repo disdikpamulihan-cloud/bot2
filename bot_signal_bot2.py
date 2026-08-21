@@ -95,51 +95,57 @@ class GeniusBot2Sniper:
         ma200 = close.rolling(window=200).mean().iloc[-1]
         ma50 = close.rolling(window=50).mean().iloc[-1]
         
-        tr = np.maximum(high.values[1:] - low.values[1:], np.maximum(abs(high.values[1:] - close.values[:-1]), abs(low.values[1:] - close.values[:-1])))
-        atr = float(np.mean(tr[-14:]) if len(tr) >= 14 else (high.iloc[-1] - low.iloc[-1]))
-        
+        # Hitung ATR dinamis untuk saring pasar sideways
+        tr = np.maximum(high.values[1:] - low.values[1:], 
+                        np.maximum(abs(high.values[1:] - close.values[:-1]), 
+                                   abs(low.values[1:] - close.values[:-1])))
+        atr_series = pd.Series(tr).rolling(14).mean()
+        atr = float(atr_series.iloc[-1]) if not atr_series.empty else 1.0
+        avg_atr = float(atr_series.rolling(20).mean().iloc[-1]) if len(atr_series) >= 20 else atr
+
         rsi_s = self.calculate_rsi(close, 14)
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
-        momentum = float(close.diff(3).iloc[-1])
-
-        h5 = np.max(high.values[-6:-1])
-        l5 = np.min(low.values[-6:-1])
+        
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
         avg_body = np.mean(abs(close.iloc[-10:] - open_p.iloc[-10:]))
 
-        is_buy_setup = (current_price > ma200) and (current_price > ma50) and (current_price > h5) and (atr >= 0.7) and (rsi > 50 and rsi < 72)
-        is_sell_setup = (current_price < ma200) and (current_price < ma50) and (current_price < l5) and (atr >= 0.7) and (rsi < 50 and rsi > 28)
+        is_volatility_good = atr >= avg_atr
+
+        # Setup Buy / Sell yang lebih terfiltrasi ketat
+        is_buy_setup = (current_price > ma200) and (ma50 > ma200) and (is_volatility_good) and (55 < rsi < 75)
+        is_sell_setup = (current_price < ma200) and (ma50 < ma200) and (is_volatility_good) and (25 < rsi < 45)
 
         ai_approved = False
         confidence = 0.0
         if self.model is not None:
             try:
-                features = np.array([[float(atr), float(body_size), float(current_price - ma200), float(momentum), float(rsi)]])
+                features = np.array([[float(atr), float(body_size), float(current_price - ma200), float(rsi)]])
                 pred = self.model.predict(features)[0]
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                if is_buy_setup and pred == 1 and confidence >= 0.85:
+                if is_buy_setup and pred == 1 and confidence >= 0.75:
                     ai_approved = True
-                elif is_sell_setup and pred == 0 and confidence >= 0.85:
+                elif is_sell_setup and pred == 0 and confidence >= 0.75:
                     ai_approved = True
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
 
-        final_buy = is_buy_setup and ai_approved and (body_size > (avg_body * 1.3)) and (close.iloc[-1] > open_p.iloc[-1])
-        final_sell = is_sell_setup and ai_approved and (body_size > (avg_body * 1.3)) and (close.iloc[-1] < open_p.iloc[-1])
+        # Konfirmasi candle solid (Engulfing tipis)
+        final_buy = is_buy_setup and ai_approved and (body_size > (avg_body * 1.5)) and (close.iloc[-1] > open_p.iloc[-1])
+        final_sell = is_sell_setup and ai_approved and (body_size > (avg_body * 1.5)) and (close.iloc[-1] < open_p.iloc[-1])
 
         if final_buy:
             return {
                 "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
-                "sl": current_price - (atr * 1.5), 
-                "tp": current_price + (atr * 5.0)
+                "sl": current_price - (atr * 1.2), 
+                "tp": current_price + (atr * 4.0)
             }
         elif final_sell:
             return {
                 "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
-                "sl": current_price + (atr * 1.5), 
-                "tp": current_price - (atr * 5.0)
+                "sl": current_price + (atr * 1.2), 
+                "tp": current_price - (atr * 4.0)
             }
 
         return {"valid": False}
