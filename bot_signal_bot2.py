@@ -80,6 +80,14 @@ class GeniusBot2Sniper:
         rs = gain / loss
         return 100 - (100 / (1 + rs))
 
+    def calculate_macd(self, series, slow=26, fast=12, signal=9):
+        exp1 = series.ewm(span=fast, adjust=False).mean()
+        exp2 = series.ewm(span=slow, adjust=False).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        histogram = macd - signal_line
+        return macd, signal_line, histogram
+
     def evaluate_genius_strategy(self) -> dict:
         df = self.fetch_market_data(count=250)
         if df.empty or len(df) < 210:
@@ -99,6 +107,10 @@ class GeniusBot2Sniper:
         
         rsi_s = self.calculate_rsi(close, 14)
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
+        
+        _, _, macd_hist_series = self.calculate_macd(close)
+        macd_hist = float(macd_hist_series.iloc[-1]) if not macd_hist_series.empty else 0.0
+        
         momentum = float(close.diff(3).iloc[-1])
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
         
@@ -109,23 +121,24 @@ class GeniusBot2Sniper:
         confidence = 0.0
         if self.model is not None:
             try:
-                # PENTING: Harus tepat 6 Fitur sesuai training
+                # PENTING: Urutan 6 Fitur kudu pas 100% jeung file training Mastermind
                 features = np.array([[
-                    float(atr), 
-                    float(body_size), 
-                    float(current_price - ma200), 
-                    float(ma50 - ma200),
-                    float(rsi),
-                    float(momentum)
+                    float(atr),                    # 1. ATR
+                    float(body_size),              # 2. BodySize
+                    float(current_price - ma200),  # 3. Close - MA200
+                    float(macd_hist),              # 4. MACD_Hist
+                    float(rsi),                    # 5. RSI
+                    float(ma50 - ma200)            # 6. MA50 - MA200
                 ]])
                 
                 pred = self.model.predict(features)[0]
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                if is_buy_setup and pred == 1 and confidence >= 0.60:
+                # Wates confidence diset luhur (>75%) sabab ieu model high-accuracy
+                if is_buy_setup and pred == 1 and confidence >= 0.75:
                     ai_approved = True
-                elif is_sell_setup and pred == 0 and confidence >= 0.60:
+                elif is_sell_setup and pred == 0 and confidence >= 0.75:
                     ai_approved = True
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
@@ -162,7 +175,7 @@ if __name__ == "__main__":
         
         if current_signal != last_signal:
             card = (
-                f"🩴💥 *[BOT 2: SAKTI MANDALA]* 💥🩴\n"
+                f"🩴💥 *[BOT 2: MASTERMIND SNIPER]* 💥🩴\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔥 *EKSEKUSI*: `STRONG {current_signal}`\n"
                 f"🧠 *Akurasi AI*: `{result['conf']*100:.1f}%`\n"
