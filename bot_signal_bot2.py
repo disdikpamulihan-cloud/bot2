@@ -23,7 +23,7 @@ class GeniusBot2Sniper:
         if path and os.path.exists(path):
             try:
                 m = joblib.load(path)
-                logging.info(f"🧠 Genius AI: Model kasohor ti {path} sukses dimuat!")
+                logging.info(f"🧠 Genius AI: Model sukses dimuat ti {path}!")
                 return m
             except Exception as e:
                 logging.warning(f"⚠️ Gagal muat model: {e}")
@@ -85,28 +85,23 @@ class GeniusBot2Sniper:
         if df.empty or len(df) < 210:
             return {"valid": False}
 
-        df_closed = df.iloc[:-1]
-        close = df_closed['Close']
-        high = df_closed['High']
-        low = df_closed['Low']
-        open_p = df_closed['Open']
-        current_price = df['Close'].iloc[-1]
+        close = df['Close']
+        open_p = df['Open']
+        current_price = close.iloc[-1]
 
         ma200 = close.rolling(window=200).mean().iloc[-1]
         ma50 = close.rolling(window=50).mean().iloc[-1]
         
-        tr = np.maximum(high.values[1:] - low.values[1:], 
-                        np.maximum(abs(high.values[1:] - close.values[:-1]), 
-                                   abs(low.values[1:] - close.values[:-1])))
-        atr_series = pd.Series(tr).rolling(14).mean()
-        atr = float(atr_series.iloc[-1]) if not atr_series.empty else 1.0
-
+        high = df['High']
+        low = df['Low']
+        tr = np.maximum(high.values[1:] - low.values[1:], np.maximum(abs(high.values[1:] - close.values[:-1]), abs(low.values[1:] - close.values[:-1])))
+        atr = float(pd.Series(tr).rolling(14).mean().iloc[-1])
+        
         rsi_s = self.calculate_rsi(close, 14)
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
-        
+        momentum = float(close.diff(3).iloc[-1])
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
         
-        # Setup dasar M5/M15
         is_buy_setup = (current_price > ma200) and (ma50 > ma200) and (rsi > 50)
         is_sell_setup = (current_price < ma200) and (ma50 < ma200) and (rsi < 50)
 
@@ -114,12 +109,14 @@ class GeniusBot2Sniper:
         confidence = 0.0
         if self.model is not None:
             try:
-                # HARUS PAS 4 FITUR (Sama persis dengan script training terakhir)
+                # PENTING: Harus tepat 6 Fitur sesuai training
                 features = np.array([[
                     float(atr), 
                     float(body_size), 
                     float(current_price - ma200), 
-                    float(rsi)
+                    float(ma50 - ma200),
+                    float(rsi),
+                    float(momentum)
                 ]])
                 
                 pred = self.model.predict(features)[0]
@@ -137,14 +134,12 @@ class GeniusBot2Sniper:
             if is_buy_setup:
                 return {
                     "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
-                    "sl": current_price - (atr * 1.5), 
-                    "tp": current_price + (atr * 4.0)
+                    "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 4.0)
                 }
             elif is_sell_setup:
                 return {
                     "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
-                    "sl": current_price + (atr * 1.5), 
-                    "tp": current_price - (atr * 4.0)
+                    "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.0)
                 }
 
         return {"valid": False}
@@ -179,8 +174,8 @@ if __name__ == "__main__":
             )
             send_telegram_alert(card)
             bot.save_last_signal(current_signal)
-            logging.info(f"✅ Sinyal {current_signal} suksés dikirim ka Telegram!")
+            logging.info(f"✅ Sinyal {current_signal} suksés dikirim!")
         else:
-            logging.info(f"ℹ️ Sinyal masih sami, anti-spam aktif.")
+            logging.info("ℹ️ Sinyal masih sami, anti-spam aktif.")
     else:
-        logging.info("ℹ️ Pasar tacan nyugemakeun / AI nolak sinyal palsu.")
+        logging.info("ℹ️ Pasar tacan nyugemakeun / AI nolak sinyal.")
