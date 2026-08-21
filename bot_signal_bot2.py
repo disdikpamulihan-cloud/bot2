@@ -23,7 +23,6 @@ class GeniusBot2Sniper:
         if path and os.path.exists(path):
             try:
                 loaded_data = joblib.load(path)
-                # Lamun disimpen salaku tuple (model, scaler)
                 if isinstance(loaded_data, tuple):
                     logging.info(f"🧠 Genius AI: Model & Scaler sukses dimuat ti {path}!")
                     return loaded_data[0], loaded_data[1]
@@ -96,7 +95,7 @@ class GeniusBot2Sniper:
     def evaluate_genius_strategy(self) -> dict:
         df = self.fetch_market_data(count=250)
         if df.empty or len(df) < 210:
-            return {"valid": False}
+            return {"valid": False, "conf": 0.0}
 
         close = df['Close']
         open_p = df['Open']
@@ -123,6 +122,7 @@ class GeniusBot2Sniper:
 
         ai_approved = False
         confidence = 0.0
+        
         if self.model is not None:
             try:
                 features = np.array([[
@@ -134,7 +134,6 @@ class GeniusBot2Sniper:
                     float(ma50 - ma200)
                 ]])
                 
-                # Transformasi fitur ngagunakeun scaler lamun aya
                 if self.scaler is not None:
                     features = self.scaler.transform(features)
                 
@@ -142,11 +141,12 @@ class GeniusBot2Sniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # Sinyal dibuka lega sakumaha kahoyong anjeun
-                if is_buy_setup and pred == 1:
-                    ai_approved = True
-                elif is_sell_setup and pred == 0:
-                    ai_approved = True
+                # SYARAT KETAT: Akurasi/Confidence kedah >= 75% (0.75) sarta setup pasar akurasi
+                if confidence >= 0.75:
+                    if is_buy_setup and pred == 1:
+                        ai_approved = True
+                    elif is_sell_setup and pred == 0:
+                        ai_approved = True
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
 
@@ -162,7 +162,8 @@ class GeniusBot2Sniper:
                     "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.0)
                 }
 
-        return {"valid": False}
+        # Mulihkeun nilai confidence sanajan teu aya sinyal, supados bot tiasa ngirim status akurasi live anu jujur
+        return {"valid": False, "conf": confidence, "price": current_price}
 
 def send_telegram_alert(message: str):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -183,13 +184,13 @@ if __name__ == "__main__":
         if current_signal != last_signal:
             card = (
                 f"🩴💥 *[BOT 2: MASTERMIND SNIPER]* 💥🩴\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔥 *EKSEKUSI*: `STRONG {current_signal}`\n"
-                f"🧠 *Akurasi AI*: `{result['conf']*100:.1f}%`\n"
+                f"🧠 *Akurasi Live AI*: `{result['conf']*100:.1f}%`\n"
                 f"💵 *Harga Masuk (OP)*: `{result['price']:.2f}`\n"
                 f"🛑 *Stop Loss (SL)*: `{result['sl']:.2f}`\n"
                 f"🎯 *Take Profit (TP)*: `{result['tp']:.2f}` (Banting Jauh Boss!)\n"
-                "-------------------------------------\n"
+                f"-------------------------------------\n"
                 f"⏰ *WAKTU*: `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')}`"
             )
             send_telegram_alert(card)
@@ -198,4 +199,15 @@ if __name__ == "__main__":
         else:
             logging.info("ℹ️ Sinyal masih sami, anti-spam aktif.")
     else:
-        logging.info("ℹ️ Pasar tacan nyugemakeun / AI nolak sinyal.")
+        # Kirim notif status jujur ka Telegram sanajan teu aya sinyal, supados ningali akurasi live
+        live_conf = result.get("conf", 0.0) * 100
+        live_price = result.get("price", 0.0)
+        status_card = (
+            f"🟢 *BOT 2 XAUUSD AKTIF (Jujur)*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📊 *Akurasi Live*: `{live_conf:.2f}%`\n"
+            f"💵 *Harga Real*: `{live_price:.2f}`\n"
+            f"🚀 *Status*: `{'Siap Sinyal (>=75%)' if live_conf >= 75 else 'Wait & See (<75%)'}`"
+        )
+        send_telegram_alert(status_card)
+        logging.info(f"ℹ️ Pasar tacan nyugemakeun / Akurasi live ({live_conf:.2f}%) handapeun 75%. Sinyal ditahan.")
