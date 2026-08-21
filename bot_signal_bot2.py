@@ -144,6 +144,7 @@ class GeniusBot2Sniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
+                # Watesan akurasi AI diset leuwih luhur (>= 75% atawa bisa disaluyukeun kana performa 95%)
                 if confidence >= 0.75:
                     if is_buy_setup and pred == 1:
                         ai_approved = True
@@ -152,7 +153,7 @@ class GeniusBot2Sniper:
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
 
-        # --- RUMUS SL & TP DINAMIS (Menyesuaikan Volatilitas Pasar Real) ---
+        # --- RUMUS SL & TP DINAMIS (Menyesuaikan Pasar Real) ---
         volatility_ratio = atr / avg_atr if avg_atr > 0 else 1.0
         dynamic_multiplier = np.clip(volatility_ratio, 0.8, 1.4)
 
@@ -190,16 +191,22 @@ if __name__ == "__main__":
         last_signal = bot.load_last_signal()
         
         if current_signal != last_signal:
+            # Format warna éksklusif ssuai pamundut
+            if current_signal == "BUY":
+                sig_display = "🟢 `BUY`"
+            else:
+                sig_display = "🔴 `SELL`"
+
             card = (
-                f"🩴💥 *[BOT 2: MASTERMIND SNIPER]* 💥🩴\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔥 *EKSEKUSI*: `STRONG {current_signal}`\n"
-                f"🧠 *Akurasi Live AI*: `{result['conf']*100:.1f}%`\n"
-                f"💵 *Harga Masuk (OP)*: `{result['price']:.2f}`\n"
-                f"🛑 *Stop Loss (SL)*: `{result['sl']:.2f}`\n"
-                f"🎯 *Take Profit (TP)*: `{result['tp']:.2f}` (Dinamis Adaptif!)\n"
-                f"-------------------------------------\n"
-                f"⏰ *WAKTU*: `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')}`"
+                f"🚨 **BOT 2 MASTERMIND UPDATED!** 🚨\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• **EKSEKUSI** : {sig_display}\n"
+                f"• **HARGA REAL** : `{result['price']:.2f}`\n"
+                f"• **AKURASI LIVE** : `{result['conf']*100:.2f}%`\n"
+                f"• **OPEN POSISI** : `{result['price']:.2f}`\n"
+                f"• **TP** : `{result['tp']:.2f}`\n"
+                f"• **SL** : `{result['sl']:.2f}`\n"
+                f"• **WAKTU** : `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S')} WIB`"
             )
             send_telegram_alert(card)
             bot.save_last_signal(current_signal)
@@ -207,7 +214,6 @@ if __name__ == "__main__":
         else:
             logging.info("ℹ️ Sinyal masih sami, anti-spam aktif.")
     else:
-        # Status / Akurasi live disumputkeun tina Telegram (mung kacatet di log console GitHub Actions)
         live_conf = result.get("conf", 0.0) * 100
         live_price = result.get("price", 0.0)
-        logging.info(f"ℹ️ Bot Aktif | Harga: {live_price:.2f} | Akurasi AI: {live_conf:.2f}% (Menunggu setup & akurasi >= 75%)")
+        logging.info(f"ℹ️ Bot Aktif | Harga: {live_price:.2f} | Akurasi AI: {live_conf:.2f}% (Menunggu setup & akurasi luhur)")
