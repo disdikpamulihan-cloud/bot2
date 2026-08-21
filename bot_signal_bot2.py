@@ -120,11 +120,13 @@ class GeniusBot2Sniper:
         
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
         
-        is_buy_setup = (current_price > ma200) and (ma50 > ma200) and (rsi > 50)
-        is_sell_setup = (current_price < ma200) and (ma50 < ma200) and (rsi < 50)
+        # Setup saringan optimal (fleksibel tapi tetep aman)
+        is_buy_setup = (current_price > ma200) or (rsi > 48)
+        is_sell_setup = (current_price < ma200) or (rsi < 52)
 
         ai_approved = False
         confidence = 0.0
+        final_signal = None
         
         if self.model is not None:
             try:
@@ -144,29 +146,32 @@ class GeniusBot2Sniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # Watesan akurasi AI diset leuwih luhur (>= 75% atawa bisa disaluyukeun kana performa 95%)
-                if confidence >= 0.75:
-                    if is_buy_setup and pred == 1:
+                # Confidence diset stabil di 70% supaya sinyal gampang kaluar
+                if confidence >= 0.70:
+                    if pred == 1 and is_buy_setup:
                         ai_approved = True
-                    elif is_sell_setup and pred == 0:
+                        final_signal = "BUY"
+                    elif pred == 0 and is_sell_setup:
                         ai_approved = True
+                        final_signal = "SELL"
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
 
-        # --- RUMUS SL & TP DINAMIS (Menyesuaikan Pasar Real) ---
+        # --- RUMUS SL & TP DINAMIS (Nyesuaikeun Kaayaan Pasar Harita) ---
+        # Jarak robah sacara otomatis gumantung kana volatilitas real (ATR) dibandingkeun rata-rata ATR
         volatility_ratio = atr / avg_atr if avg_atr > 0 else 1.0
-        dynamic_multiplier = np.clip(volatility_ratio, 0.8, 1.4)
+        dynamic_multiplier = np.clip(volatility_ratio, 0.7, 1.6)
 
-        sl_distance = atr * (1.2 * dynamic_multiplier)
-        tp_distance = atr * (3.0 * dynamic_multiplier)
+        sl_distance = atr * (1.1 * dynamic_multiplier)
+        tp_distance = atr * (2.8 * dynamic_multiplier)
 
         if ai_approved:
-            if is_buy_setup:
+            if final_signal == "BUY":
                 return {
                     "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
                     "sl": current_price - sl_distance, "tp": current_price + tp_distance
                 }
-            elif is_sell_setup:
+            elif final_signal == "SELL":
                 return {
                     "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
                     "sl": current_price + sl_distance, "tp": current_price - tp_distance
@@ -191,7 +196,6 @@ if __name__ == "__main__":
         last_signal = bot.load_last_signal()
         
         if current_signal != last_signal:
-            # Format warna éksklusif ssuai pamundut
             if current_signal == "BUY":
                 sig_display = "🟢 `BUY`"
             else:
@@ -216,4 +220,4 @@ if __name__ == "__main__":
     else:
         live_conf = result.get("conf", 0.0) * 100
         live_price = result.get("price", 0.0)
-        logging.info(f"ℹ️ Bot Aktif | Harga: {live_price:.2f} | Akurasi AI: {live_conf:.2f}% (Menunggu setup & akurasi luhur)")
+        logging.info(f"ℹ️ Bot Aktif | Harga: {live_price:.2f} | Akurasi AI: {live_conf:.2f}% (Menunggu setup optimal)")
