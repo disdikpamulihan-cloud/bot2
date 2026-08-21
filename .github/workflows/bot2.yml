@@ -2,8 +2,8 @@ name: Bot 2 Ultra Sniper (Auto-Train & Signal)
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # Bot bakal jalan otomatis unggal 5 menit
-  workflow_dispatch: # Supaya bisa dijalankeun manual iraha waé
+    - cron: '*/5 * * * *' # Bot jalan otomatis unggal 5 menit
+  workflow_dispatch: # Bisa dijalankeun manual
 
 jobs:
   run-bot-mastermind:
@@ -19,6 +19,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Auto Train AI Bot 2
