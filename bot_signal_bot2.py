@@ -97,17 +97,20 @@ class GeniusBot2Sniper:
         if df.empty or len(df) < 210:
             return {"valid": False, "conf": 0.0}
 
-        close = df['Close']
-        open_p = df['Open']
-        current_price = close.iloc[-1]
+        df_closed = df.iloc[:-1]
+        close = df_closed['Close']
+        open_p = df_closed['Open']
+        current_price = df['Close'].iloc[-1]
 
         ma200 = close.rolling(window=200).mean().iloc[-1]
         ma50 = close.rolling(window=50).mean().iloc[-1]
         
-        high = df['High']
-        low = df['Low']
+        high = df_closed['High']
+        low = df_closed['Low']
         tr = np.maximum(high.values[1:] - low.values[1:], np.maximum(abs(high.values[1:] - close.values[:-1]), abs(low.values[1:] - close.values[:-1])))
-        atr = float(pd.Series(tr).rolling(14).mean().iloc[-1])
+        atr_series = pd.Series(tr).rolling(14).mean()
+        atr = float(atr_series.iloc[-1]) if not atr_series.empty else 1.0
+        avg_atr = float(atr_series.rolling(20).mean().iloc[-1]) if len(atr_series) >= 20 else atr
         
         rsi_s = self.calculate_rsi(close, 14)
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
@@ -141,7 +144,6 @@ class GeniusBot2Sniper:
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                # SYARAT KETAT: Akurasi/Confidence kedah >= 75% (0.75) sarta setup pasar akurasi
                 if confidence >= 0.75:
                     if is_buy_setup and pred == 1:
                         ai_approved = True
@@ -150,19 +152,25 @@ class GeniusBot2Sniper:
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
 
+        # --- RUMUS SL & TP DINAMIS (Menyesuaikan Volatilitas Pasar Real) ---
+        volatility_ratio = atr / avg_atr if avg_atr > 0 else 1.0
+        dynamic_multiplier = np.clip(volatility_ratio, 0.8, 1.4)
+
+        sl_distance = atr * (1.2 * dynamic_multiplier)
+        tp_distance = atr * (3.0 * dynamic_multiplier)
+
         if ai_approved:
             if is_buy_setup:
                 return {
                     "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
-                    "sl": current_price - (atr * 1.5), "tp": current_price + (atr * 4.0)
+                    "sl": current_price - sl_distance, "tp": current_price + tp_distance
                 }
             elif is_sell_setup:
                 return {
                     "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
-                    "sl": current_price + (atr * 1.5), "tp": current_price - (atr * 4.0)
+                    "sl": current_price + sl_distance, "tp": current_price - tp_distance
                 }
 
-        # Mulihkeun nilai confidence sanajan teu aya sinyal, supados bot tiasa ngirim status akurasi live anu jujur
         return {"valid": False, "conf": confidence, "price": current_price}
 
 def send_telegram_alert(message: str):
@@ -189,7 +197,7 @@ if __name__ == "__main__":
                 f"🧠 *Akurasi Live AI*: `{result['conf']*100:.1f}%`\n"
                 f"💵 *Harga Masuk (OP)*: `{result['price']:.2f}`\n"
                 f"🛑 *Stop Loss (SL)*: `{result['sl']:.2f}`\n"
-                f"🎯 *Take Profit (TP)*: `{result['tp']:.2f}` (Banting Jauh Boss!)\n"
+                f"🎯 *Take Profit (TP)*: `{result['tp']:.2f}` (Dinamis Adaptif!)\n"
                 f"-------------------------------------\n"
                 f"⏰ *WAKTU*: `{datetime.now(bot.wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')}`"
             )
@@ -199,15 +207,7 @@ if __name__ == "__main__":
         else:
             logging.info("ℹ️ Sinyal masih sami, anti-spam aktif.")
     else:
-        # Kirim notif status jujur ka Telegram sanajan teu aya sinyal, supados ningali akurasi live
+        # Status / Akurasi live disumputkeun tina Telegram (mung kacatet di log console GitHub Actions)
         live_conf = result.get("conf", 0.0) * 100
         live_price = result.get("price", 0.0)
-        status_card = (
-            f"🟢 *BOT 2 XAUUSD AKTIF (Jujur)*\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Akurasi Live*: `{live_conf:.2f}%`\n"
-            f"💵 *Harga Real*: `{live_price:.2f}`\n"
-            f"🚀 *Status*: `{'Siap Sinyal (>=75%)' if live_conf >= 75 else 'Wait & See (<75%)'}`"
-        )
-        send_telegram_alert(status_card)
-        logging.info(f"ℹ️ Pasar tacan nyugemakeun / Akurasi live ({live_conf:.2f}%) handapeun 75%. Sinyal ditahan.")
+        logging.info(f"ℹ️ Bot Aktif | Harga: {live_price:.2f} | Akurasi AI: {live_conf:.2f}% (Menunggu setup & akurasi >= 75%)")
