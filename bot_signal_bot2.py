@@ -95,58 +95,57 @@ class GeniusBot2Sniper:
         ma200 = close.rolling(window=200).mean().iloc[-1]
         ma50 = close.rolling(window=50).mean().iloc[-1]
         
-        # Hitung ATR dinamis untuk saring pasar sideways
         tr = np.maximum(high.values[1:] - low.values[1:], 
                         np.maximum(abs(high.values[1:] - close.values[:-1]), 
                                    abs(low.values[1:] - close.values[:-1])))
         atr_series = pd.Series(tr).rolling(14).mean()
         atr = float(atr_series.iloc[-1]) if not atr_series.empty else 1.0
-        avg_atr = float(atr_series.rolling(20).mean().iloc[-1]) if len(atr_series) >= 20 else atr
 
         rsi_s = self.calculate_rsi(close, 14)
         rsi = float(rsi_s.iloc[-1]) if not rsi_s.empty else 50.0
         
         body_size = abs(close.iloc[-1] - open_p.iloc[-1])
-        avg_body = np.mean(abs(close.iloc[-10:] - open_p.iloc[-10:]))
-
-        is_volatility_good = atr >= avg_atr
-
-        # Setup Buy / Sell yang lebih terfiltrasi ketat
-        is_buy_setup = (current_price > ma200) and (ma50 > ma200) and (is_volatility_good) and (55 < rsi < 75)
-        is_sell_setup = (current_price < ma200) and (ma50 < ma200) and (is_volatility_good) and (25 < rsi < 45)
+        
+        # Setup dasar M5/M15
+        is_buy_setup = (current_price > ma200) and (ma50 > ma200) and (rsi > 50)
+        is_sell_setup = (current_price < ma200) and (ma50 < ma200) and (rsi < 50)
 
         ai_approved = False
         confidence = 0.0
         if self.model is not None:
             try:
-                features = np.array([[float(atr), float(body_size), float(current_price - ma200), float(rsi)]])
+                # HARUS PAS 4 FITUR (Sama persis dengan script training terakhir)
+                features = np.array([[
+                    float(atr), 
+                    float(body_size), 
+                    float(current_price - ma200), 
+                    float(rsi)
+                ]])
+                
                 pred = self.model.predict(features)[0]
                 probs = self.model.predict_proba(features)[0]
                 confidence = float(np.max(probs))
                 
-                if is_buy_setup and pred == 1 and confidence >= 0.75:
+                if is_buy_setup and pred == 1 and confidence >= 0.60:
                     ai_approved = True
-                elif is_sell_setup and pred == 0 and confidence >= 0.75:
+                elif is_sell_setup and pred == 0 and confidence >= 0.60:
                     ai_approved = True
             except Exception as e:
                 logging.warning(f"AI Prediction Error: {e}")
 
-        # Konfirmasi candle solid (Engulfing tipis)
-        final_buy = is_buy_setup and ai_approved and (body_size > (avg_body * 1.5)) and (close.iloc[-1] > open_p.iloc[-1])
-        final_sell = is_sell_setup and ai_approved and (body_size > (avg_body * 1.5)) and (close.iloc[-1] < open_p.iloc[-1])
-
-        if final_buy:
-            return {
-                "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
-                "sl": current_price - (atr * 1.2), 
-                "tp": current_price + (atr * 4.0)
-            }
-        elif final_sell:
-            return {
-                "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
-                "sl": current_price + (atr * 1.2), 
-                "tp": current_price - (atr * 4.0)
-            }
+        if ai_approved:
+            if is_buy_setup:
+                return {
+                    "valid": True, "signal": "BUY", "price": current_price, "conf": confidence,
+                    "sl": current_price - (atr * 1.5), 
+                    "tp": current_price + (atr * 4.0)
+                }
+            elif is_sell_setup:
+                return {
+                    "valid": True, "signal": "SELL", "price": current_price, "conf": confidence,
+                    "sl": current_price + (atr * 1.5), 
+                    "tp": current_price - (atr * 4.0)
+                }
 
         return {"valid": False}
 
@@ -160,7 +159,6 @@ def send_telegram_alert(message: str):
 
 if __name__ == "__main__":
     bot = GeniusBot2Sniper('model_bot2.pkl')
-    
     result = bot.evaluate_genius_strategy()
     
     if result.get("valid"):
@@ -169,7 +167,7 @@ if __name__ == "__main__":
         
         if current_signal != last_signal:
             card = (
-                f"🩴💥 *[BOT 2: DISABET KU SENDAL JEPIT]* 💥🩴\n"
+                f"🩴💥 *[BOT 2: SAKTI MANDALA]* 💥🩴\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔥 *EKSEKUSI*: `STRONG {current_signal}`\n"
                 f"🧠 *Akurasi AI*: `{result['conf']*100:.1f}%`\n"
@@ -181,8 +179,8 @@ if __name__ == "__main__":
             )
             send_telegram_alert(card)
             bot.save_last_signal(current_signal)
-            logging.info(f"✅ Sinyal Genius {current_signal} suksés dikirim ka Telegram!")
+            logging.info(f"✅ Sinyal {current_signal} suksés dikirim ka Telegram!")
         else:
-            logging.info(f"ℹ️ Sinyal masih {current_signal}, teu dikirim (Anti-spam aktif).")
+            logging.info(f"ℹ️ Sinyal masih sami, anti-spam aktif.")
     else:
         logging.info("ℹ️ Pasar tacan nyugemakeun / AI nolak sinyal palsu.")
