@@ -20,7 +20,7 @@ def send_telegram_alert(message: str):
         requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
     except: pass
 
-def fetch_expert_data(count: int = 8000) -> pd.DataFrame:
+def fetch_expert_data(count: int = 5000) -> pd.DataFrame:
     symbols = ["frxXAUUSD", "XAUUSD", "gold"]
     app_id = "1089"
     ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
@@ -44,7 +44,7 @@ def fetch_expert_data(count: int = 8000) -> pd.DataFrame:
                 df.rename(columns={'close': 'Close', 'open': 'Open', 'high': 'High', 'low': 'Low'}, inplace=True)
                 for col in ['Close', 'Open', 'High', 'Low']:
                     df[col] = df[col].astype(float)
-                logging.info(f"✅ Bot 2 Anti-Zonk: Berhasil tarik {len(df)} data history tina {s}.")
+                logging.info(f"✅ Bot 2: Berhasil tarik {len(df)} data history tina {s}.")
                 return df
         except Exception as e:
             logging.warning(f"⚠️ Bot 2 Gagal tarik data {s}: {e}")
@@ -78,8 +78,8 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 def train_bot2_model():
-    logging.info("🧠 Bot 2 Anti-Zonk: Memulai Pelatihan AI Tingkat Tinggi (High Accuracy Mode)...")
-    df = fetch_expert_data(count=8000)
+    logging.info("🧠 Bot 2: Memulai Pelatihan AI Presisi Tinggi...")
+    df = fetch_expert_data(count=5000)
     
     if df.empty or len(df) < 400:
         logging.error("❌ Bot 2: Data teu cukup!")
@@ -97,7 +97,7 @@ def train_bot2_model():
                     np.maximum(abs(high.values[1:] - close.values[:-1]), 
                                abs(low.values[1:] - close.values[:-1])))
     atr_series = pd.Series(tr).rolling(window=14).mean()
-    atr = pd.Series(atr_series, index=df.index).fillna(method='bfill')
+    atr = pd.Series(atr_series, index=df.index).bfill().fillna(1.0)
     
     rsi = calculate_rsi(close, 14).fillna(50)
     momentum = close.diff(3).fillna(0)
@@ -114,27 +114,30 @@ def train_bot2_model():
     }).dropna()
 
     X, y = [], []
-    for i in range(200, len(df_feat) - 2):
+    for i in range(200, len(df_feat) - 3):
         row = df_feat.iloc[i]
+        
+        # Fitur diperkaya agar AI punya pola tren yang jelas
         features = [
             float(row['ATR']), 
             float(row['BodySize']), 
             float(row['Close'] - row['MA200']), 
-            float(row['RSI'])
+            float(row['MA50'] - row['MA200']),
+            float(row['RSI']),
+            float(row['Momentum'])
         ]
         
-        next_c1 = df_feat['Close'].iloc[i+1]
-        next_c2 = df_feat['Close'].iloc[i+2]
         cur_c = row['Close']
         current_atr = row['ATR']
+        future_move = df_feat['Close'].iloc[i+3] - cur_c  # Cek pergerakan 3 candle ke depan
 
-        # Pelonggaran target agar pembelajaran pola lebih optimal
-        if (next_c1 - cur_c) > (current_atr * 0.8) and (next_c2 - cur_c) > (current_atr * 1.5):
+        # Labeling ketat khusus tren kuat (menghindari noise sideways)
+        if future_move > (current_atr * 1.5):
             X.append(features); y.append(1)
-        elif (cur_c - next_c1) > (current_atr * 0.8) and (cur_c - next_c2) > (current_atr * 1.5):
+        elif future_move < -(current_atr * 1.5):
             X.append(features); y.append(0)
 
-    if len(X) < 20:
+    if len(X) < 30:
         logging.error("❌ Sampel latihan teuing saeutik, dibatalkeun.")
         return False
 
@@ -144,18 +147,18 @@ def train_bot2_model():
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
     from sklearn.model_selection import train_test_split
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Hyperparameter ditingkatkan untuk akurasi maksimal
-    clf1 = RandomForestClassifier(n_estimators=1000, max_depth=15, random_state=42, class_weight='balanced')
-    clf2 = GradientBoostingClassifier(n_estimators=500, learning_rate=0.03, max_depth=6, random_state=42)
+    # Menggunakan estimator yang lebih stabil untuk klasifikasi arah tren
+    clf1 = RandomForestClassifier(n_estimators=300, max_depth=8, random_state=42, class_weight='balanced')
+    clf2 = GradientBoostingClassifier(n_estimators=200, learning_rate=0.05, max_depth=4, random_state=42)
 
     mastermind_model = VotingClassifier(
-        estimators=[('rf_ultra', clf1), ('gb_ultra', clf2)],
+        estimators=[('rf', clf1), ('gb', clf2)],
         voting='soft'
     )
 
-    logging.info("🚀 Bot 2: Melatih Model AI...")
+    logging.info("🚀 Bot 2: Fitting Model AI Presisi...")
     mastermind_model.fit(X_train, y_train)
 
     score = mastermind_model.score(X_test, y_test)
@@ -169,17 +172,16 @@ def train_bot2_model():
     current_time = datetime.now(wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')
 
     notification_card = (
-        f"🧠🔥 *[BOT 2: AI ANTI-ZONK AKTIF]* 🔥🧠\n"
+        f"🧠🔥 *[BOT 2: AI PRESISI TINGGI]* 🔥🧠\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✨ *Status*: `Model Berhasil Dilatih Ulang`\n"
+        f"✨ *Status*: `Model Berhasil Diperbarui`\n"
         f"🎯 *Akurasi Model*: `{score * 100:.2f}%`\n"
         f"💵 *Harga Real XAUUSD*: `{real_price:.2f}`\n"
         "-------------------------------------\n"
-        f"🩴 *Info*: `Siap disabet ku sendal jepit, manteng neangan sinyal jitu!`\n"
+        f"🩴 *Info*: `Sinyal disaring ketat, siap ngebul!`\n"
         f"⏰ *Waktu*: `{current_time}`"
     )
     send_telegram_alert(notification_card)
-    logging.info("📢 Notifikasi AI Aktif & Harga Real suksés dikirim ka Telegram!")
     return True
 
 if __name__ == "__main__":
