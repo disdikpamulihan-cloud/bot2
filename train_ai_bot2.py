@@ -6,11 +6,21 @@ import joblib
 import os
 import ssl
 import logging
+import requests
+from datetime import datetime
+import pytz
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def send_telegram_alert(message: str):
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id: return
+    try:
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
+    except: pass
+
 def fetch_expert_data(count: int = 4000) -> pd.DataFrame:
-    """Narik data sajarah panglobana pikeun latihan model Sniper Anti-Zonk."""
     symbols = ["frxXAUUSD", "XAUUSD", "gold"]
     app_id = "1089"
     ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
@@ -22,7 +32,7 @@ def fetch_expert_data(count: int = 4000) -> pd.DataFrame:
                 "ticks_history": s,
                 "count": count,
                 "end": "latest",
-                "granularity": 300, # TF 5 Menit
+                "granularity": 300,
                 "style": "candles"
             }
             ws.send(json.dumps(req))
@@ -39,6 +49,27 @@ def fetch_expert_data(count: int = 4000) -> pd.DataFrame:
         except Exception as e:
             logging.warning(f"⚠️ Bot 2 Gagal tarik data {s}: {e}")
     return pd.DataFrame()
+
+def get_current_real_price() -> float:
+    """Narik harga real XAUUSD panganyarna pisan tina WebSocket."""
+    symbols = ["frxXAUUSD", "XAUUSD", "gold"]
+    app_id = "1089"
+    ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={app_id}"
+    for s in symbols:
+        ws = None
+        try:
+            ws = websocket.create_connection(ws_url, timeout=10, sslopt={"cert_reqs": ssl.CERT_NONE})
+            req = {"ticks_history": s, "count": 1, "end": "latest", "granularity": 60, "style": "candles"}
+            ws.send(json.dumps(req))
+            res = json.loads(ws.recv())
+            ws.close()
+            if "candles" in res and len(res["candles"]) > 0:
+                return float(res["candles"][-1]["close"])
+        except:
+            if ws:
+                try: ws.close()
+                except: pass
+    return 0.0
 
 def calculate_rsi(series, period=14):
     delta = series.diff()
@@ -60,7 +91,6 @@ def train_bot2_model():
     low = df['Low']
     open_p = df['Open']
 
-    # Indikator Utama Kelas Institusi
     ma200 = close.rolling(window=200).mean()
     ma50 = close.rolling(window=50).mean()
     tr = np.maximum(high[1:] - low[1:], np.maximum(abs(high[1:] - close[:-1]), abs(low[1:] - close[:-1])))
@@ -78,34 +108,23 @@ def train_bot2_model():
         'BodySize': abs(close - open_p)
     }).dropna()
 
-    X = []
-    y = []
-
-    # FILTER KETAT ANTI-ZONK: AI MUNG DIAJAR TINA MOMENTUM MEJEHNAH (Bener-bener ngajelegur jauh)
+    X, y = [], []
     for i in range(200, len(df_feat) - 2):
         row = df_feat.iloc[i]
-        
-        features = [
-            float(row['ATR']), 
-            float(row['BodySize']), 
-            float(row['Close'] - row['MA200']), 
-            float(row['Momentum']),
-            float(row['RSI'])
-        ]
+        features = [float(row['ATR']), float(row['BodySize']), float(row['Close'] - row['MA200']), float(row['Momentum']), float(row['RSI'])]
         
         next_c1 = df_feat['Close'].iloc[i+1]
         next_c2 = df_feat['Close'].iloc[i+2]
         cur_c = row['Close']
         current_atr = row['ATR']
 
-        # Syarat Mutlak: Harga kudu lumpat minimal 1.2x ATR dina candle ka-1 jeung 2.2x ATR dina candle ka-2
         if (next_c1 - cur_c) > (current_atr * 1.2) and (next_c2 - cur_c) > (current_atr * 2.2):
-            X.append(features); y.append(1) # BUY Murni & Kuat
+            X.append(features); y.append(1)
         elif (cur_c - next_c1) > (current_atr * 1.2) and (cur_c - next_c2) > (current_atr * 2.2):
-            X.append(features); y.append(0) # SELL Murni & Kuat
+            X.append(features); y.append(0)
 
     if len(X) < 20:
-        logging.error("❌ Sampel teuing saeutik pisan, pasar nuju teu stabil. Latihan dibatalkeun pikeun nyegah model cacad.")
+        logging.error("❌ Sampel teuing saeutik, latihan dibatalkeun.")
         return False
 
     X = np.array(X)
@@ -116,7 +135,6 @@ def train_bot2_model():
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15, random_state=42)
 
-    # Model Ensemble Kuat: Random Forest + Gradient Boosting
     clf1 = RandomForestClassifier(n_estimators=500, max_depth=10, random_state=42, class_weight='balanced')
     clf2 = GradientBoostingClassifier(n_estimators=300, learning_rate=0.01, max_depth=5, random_state=42)
 
@@ -129,11 +147,29 @@ def train_bot2_model():
     mastermind_model.fit(X_train, y_train)
 
     score = mastermind_model.score(X_test, y_test)
-    logging.info(f"✨ Bot 2 Sukses Dilatih! Akurasi test murni: {score * 100:.2f}%")
+    logging.info(f"✨ Bot 2 Sukses Dilatih! Akurasi test: {score * 100:.2f}%")
 
     model_filename = "model_bot2.pkl"
     joblib.dump(mastermind_model, model_filename)
-    logging.info(f"💾 Model Bot 2 Anti-Zonk disimpen kana {model_filename}!")
+    
+    # Tarik harga real ayeuna pikeun dilaporkeun ka Telegram
+    real_price = get_current_real_price()
+    wib_tz = pytz.timezone('Asia/Jakarta')
+    current_time = datetime.now(wib_tz).strftime('%Y-%m-%d %H:%M:%S WIB')
+
+    # Kirim Bewara Sukses Latihan + Harga Real ka Telegram
+    notification_card = (
+        f"🧠🔥 *[BOT 2: AI ANTI-ZONK AKTIF]* 🔥🧠\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"✨ *Status*: `Model Berhasil Dilatih Ulang`\n"
+        f"🎯 *Akurasi Model*: `{score * 100:.2f}%`\n"
+        f"💵 *Harga Real XAUUSD*: `{real_price:.2f}`\n"
+        "-------------------------------------\n"
+        f"🩴 *Info*: `Siap disabet ku sendal jepit, manteng neangan sinyal jitu!`\n"
+        f"⏰ *Waktu*: `{current_time}`"
+    )
+    send_telegram_alert(notification_card)
+    logging.info("📢 Notifikasi AI Aktif & Harga Real suksés dikirim ka Telegram!")
     return True
 
 if __name__ == "__main__":
